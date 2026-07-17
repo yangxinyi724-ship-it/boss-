@@ -4,8 +4,6 @@
 
 仓库：[yangxinyi724-ship-it/boss-](https://github.com/yangxinyi724-ship-it/boss-)
 
-> 包名仍为 `boss-agent-cli`，命令行入口为 `boss`；Python 包为 `pet_boss`。
-
 ---
 
 ## 能做什么
