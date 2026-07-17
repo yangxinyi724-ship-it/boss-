@@ -1,0 +1,147 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "boss-agent-cli"
+version = "1.11.0"
+description = "AI Agent 专用的 BOSS 直聘求职 CLI 工具"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+	{name = "can4hou6joeng4"},
+]
+keywords = ["boss-zhipin", "job-search", "ai-agent", "cli", "recruitment", "boss直聘"]
+classifiers = [
+	"Development Status :: 4 - Beta",
+	"Environment :: Console",
+	"Intended Audience :: Developers",
+	"License :: OSI Approved :: MIT License",
+	"Programming Language :: Python :: 3",
+	"Programming Language :: Python :: 3.10",
+	"Programming Language :: Python :: 3.11",
+	"Programming Language :: Python :: 3.12",
+	"Programming Language :: Python :: 3.13",
+	"Topic :: Office/Business",
+	"Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+	"click>=8.0",
+	"httpx>=0.27",
+	"cryptography>=42.0",
+	"patchright>=1.58.2",
+	"browser-cookie3>=0.16.2",
+	"rich>=13.0",
+	"pyyaml>=6.0",
+	"websockets>=12.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/can4hou6joeng4/boss-agent-cli"
+Repository = "https://github.com/can4hou6joeng4/boss-agent-cli"
+Issues = "https://github.com/can4hou6joeng4/boss-agent-cli/issues"
+
+[project.optional-dependencies]
+dev = [
+	"pytest>=9.0.3",
+	"pytest-cov>=5.0",
+	"ruff>=0.4",
+	"pre-commit>=3.0",
+	"mypy>=1.20",
+	"types-PyYAML>=6.0",
+]
+web = [
+	"starlette>=0.37",
+	"uvicorn>=0.30",
+	"pypdf>=4.0",
+	"python-multipart>=0.0.9",
+]
+
+[project.scripts]
+boss = "pet_boss.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pet_boss"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/pet_boss/web/static" = "pet_boss/web/static"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+# Python files intentionally use tabs. Ruff's indent-width controls visual width.
+[tool.ruff]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.format]
+indent-style = "tab"
+
+[tool.mypy]
+python_version = "3.10"
+# 渐进接入：仅跑基础类型检查，允许现有未注解函数存在
+# 目标：先覆盖报错→逐模块消化→最终切 --strict
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+exclude = [
+	"^build/",
+	"^dist/",
+	"^\\.venv/",
+]
+
+# 逐模块严格化：已覆盖率 100% 的核心工具模块先严起来
+[[tool.mypy.overrides]]
+module = [
+	"pet_boss.output",
+	"pet_boss.config",
+	"pet_boss.hooks",
+	"pet_boss.match_score",
+	"pet_boss.index_cache",
+	"pet_boss.search_filters",
+	"pet_boss.resume.models",
+	"pet_boss.resume.store",
+	"pet_boss.commands.cities",
+	"pet_boss.commands.login",
+	"pet_boss.commands.logout",
+	"pet_boss.commands.status",
+	"pet_boss.commands.doctor",
+	"pet_boss.commands.schema",
+	"pet_boss.commands.profile_cmd",
+	"pet_boss.main",
+	"pet_boss.ai.config",
+	"pet_boss.ai.service",
+	"pet_boss.ai.prompts",
+	"pet_boss.resume.templates",
+	"pet_boss.resume.export",
+	"pet_boss.auth.token_store",
+	"pet_boss.auth.cookie_extract",
+	"pet_boss.api.models",
+	"pet_boss.api.throttle",
+	"pet_boss.api.httpx_helpers",
+	"pet_boss.api.endpoints",
+	"pet_boss.api.endpoints_loader",
+	"pet_boss.cache.store",
+	"pet_boss.auth.manager",
+	"pet_boss.auth.qr_login",
+	"pet_boss.api.client",
+	"pet_boss.api.browser_client",
+	"pet_boss.auth.browser",
+	"pet_boss.platforms",
+	"pet_boss.platforms.base",
+	"pet_boss.platforms.zhipin",
+	"pet_boss.commands._platform",
+]
+disallow_untyped_defs = true
+disallow_any_generics = true
+warn_return_any = true
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.1",
+    "types-pyyaml>=6.0.12.20260408",
+    "websockets>=16.0",
+]

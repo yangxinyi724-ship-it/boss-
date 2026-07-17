@@ -1,0 +1,36 @@
+import json
+from pathlib import Path
+from typing import Any
+
+DEFAULTS: dict[str, Any] = {
+	"default_city": None,
+	"default_salary": None,
+	"request_delay": [1.5, 3.0],
+	"batch_greet_delay": [2.0, 5.0],
+	"batch_greet_max": 10,
+	"log_level": "error",
+	"login_timeout": 120,
+	"cdp_url": None,
+	"export_dir": None,
+	"resume_default_template": "default",
+	"resume_export_format": "pdf",
+	"platform": "zhipin",
+	"role": "candidate",
+	"low_risk_mode": True,
+}
+
+
+def load_config(config_path: Path | None) -> dict[str, Any]:
+	cfg = dict(DEFAULTS)
+	if not config_path or not config_path.exists():
+		return cfg
+	raw = config_path.read_text(encoding="utf-8").strip()
+	if not raw:
+		return cfg
+	try:
+		user_cfg = json.loads(raw)
+	except json.JSONDecodeError:
+		return cfg
+	if isinstance(user_cfg, dict):
+		cfg.update(user_cfg)
+	return cfg

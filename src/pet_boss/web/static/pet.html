@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>办公室 · AI 桌面宠物</title>
+  <link rel="stylesheet" href="/static/pet.css">
+</head>
+<body>
+  <div class="pet-app">
+    <div class="pet-layout">
+      <div class="pet-left-sidebar">
+        <section id="petMonitorSidebar" class="pet-monitor-sidebar" aria-label="监控器">
+          <header class="pet-monitor-head">
+            <h2 class="pet-monitor-title">监控器</h2>
+            <p class="pet-monitor-sub">侦察流 · 监控 AI 实时状态</p>
+          </header>
+          <div class="pet-monitor-body">
+            <dl class="pet-monitor-grid">
+              <div class="pet-monitor-row">
+                <dt>监控状态</dt>
+                <dd><span id="petMonitorStatus" class="pet-monitor-badge pet-monitor-badge--idle">待命</span></dd>
+              </div>
+              <div class="pet-monitor-row">
+                <dt>当前阶段</dt>
+                <dd id="petMonitorStage" class="pet-monitor-value">—</dd>
+              </div>
+              <div class="pet-monitor-row">
+                <dt>事件</dt>
+                <dd id="petMonitorEvent" class="pet-monitor-value pet-monitor-mono">—</dd>
+              </div>
+              <div class="pet-monitor-row">
+                <dt>搜岗</dt>
+                <dd id="petMonitorLocation" class="pet-monitor-value">—</dd>
+              </div>
+              <div class="pet-monitor-row pet-monitor-row--block">
+                <dt>最新进展</dt>
+                <dd id="petMonitorProgress" class="pet-monitor-value pet-monitor-progress">等待开始搜岗…</dd>
+              </div>
+              <div class="pet-monitor-row">
+                <dt>传输状态</dt>
+                <dd><span id="petMonitorStream" class="pet-monitor-stream pet-monitor-stream--idle">未连接</span></dd>
+              </div>
+            </dl>
+            <div class="pet-monitor-actions-wrap">
+              <h3 class="pet-monitor-actions-title">最近动作</h3>
+              <ul id="petMonitorActions" class="pet-monitor-actions">
+                <li class="pet-monitor-action pet-monitor-action--empty">暂无动作记录</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <aside id="petScoutHistorySidebar" class="pet-scout-history-sidebar" aria-label="侦察历史">
+          <div class="pet-scout-history-head">
+            <h2 class="pet-scout-history-title">侦察历史</h2>
+            <p class="pet-scout-history-sub">已侦察岗位去重 · 不再重复分析</p>
+          </div>
+          <div class="pet-scout-history-body">
+            <p class="pet-scout-history-count">
+              已记录 <span class="pet-scout-history-num" id="petScoutHistoryNum">—</span> 个岗位
+            </p>
+            <button type="button" class="pet-scout-history-clear-btn" id="petScoutHistoryClear">
+              全部重置
+            </button>
+            <p class="pet-scout-history-hint">
+              清空后此前侦察过的岗位将重新进入搜岗；分析记录与 AI 偏好记忆保留
+            </p>
+          </div>
+        </aside>
+      </div>
+
+      <div class="pet-main">
+        <header class="pet-header">
+          <div>
+            <h1>AI 办公室</h1>
+            <p id="petStatus">加载中…</p>
+          </div>
+          <div class="pet-header-actions">
+            <button type="button" class="pet-job-sidebar-open" id="petJobSidebarOpen" hidden>
+              岗位 <span class="pet-job-count-inline" id="petJobCountInline">0</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="pet-scout-bar" id="petScoutBar">
+          <input type="text" id="petScoutQuery" class="pet-scout-query" placeholder="搜索关键词（可留空，自动生成）" autocomplete="off">
+          <button type="button" class="pet-scout-btn pet-scout-start" id="petScoutStart">开始搜岗</button>
+          <button type="button" class="pet-scout-btn pet-scout-stop" id="petScoutStop" hidden disabled>停止搜岗</button>
+        </div>
+
+        <div class="pet-stage-wrap">
+          <div id="petStageViewport" class="pet-stage-viewport">
+            <div id="petStage" class="pet-stage" aria-label="办公室场景">
+              <img id="petBackground" class="pet-bg" alt="" hidden>
+            </div>
+          </div>
+        </div>
+
+        <div id="petLegend" class="pet-legend"></div>
+
+        <details class="pet-debug">
+          <summary>调试 · 手动切换动画</summary>
+          <div id="petDebugPanel" class="pet-debug-panel"></div>
+        </details>
+      </div>
+
+      <aside id="petJobSidebar" class="pet-job-sidebar" aria-label="通过岗位列表">
+        <div class="pet-job-sidebar-head">
+          <div class="pet-job-sidebar-head-text">
+            <h2 class="pet-job-sidebar-title">通过岗位</h2>
+            <p class="pet-job-sidebar-sub">分析达标 · 收藏或拒绝</p>
+          </div>
+          <span class="pet-job-count" id="petJobCount">0</span>
+          <button type="button" class="pet-job-sidebar-toggle" id="petJobSidebarToggle" title="收起侧边栏" aria-expanded="true">›</button>
+        </div>
+        <div class="pet-job-sidebar-body">
+          <p class="pet-job-empty" id="petJobEmpty">侦察进行中通过的岗位会显示在这里</p>
+          <div class="pet-job-list" id="petJobList"></div>
+        </div>
+      </aside>
+    </div>
+
+    <div id="petArchiveDrawer" class="pet-archive-modal" hidden>
+      <div class="pet-archive-sheet" role="dialog" aria-labelledby="petArchiveDrawerTitle">
+        <div class="pet-archive-head">
+          <h2 id="petArchiveDrawerTitle">资料柜</h2>
+          <p class="pet-archive-sub">选择要查看的档案</p>
+          <button type="button" class="pet-archive-close" id="petArchiveDrawerClose" title="关闭">×</button>
+        </div>
+        <div class="pet-archive-list" id="petArchiveList"></div>
+      </div>
+    </div>
+
+    <div id="petArchiveReport" class="pet-archive-modal" hidden>
+      <div class="pet-archive-sheet pet-archive-sheet--report" role="dialog" aria-labelledby="petArchiveReportTitle">
+        <div class="pet-archive-head">
+          <button type="button" class="pet-archive-back" id="petArchiveReportBack">← 目录</button>
+          <h2 id="petArchiveReportTitle">档案</h2>
+          <button type="button" class="pet-archive-close" id="petArchiveReportClose" title="关闭">×</button>
+        </div>
+        <div class="pet-archive-report-body" id="petArchiveReportBody"></div>
+        <div class="pet-archive-report-actions" id="petArchiveReportActions"></div>
+      </div>
+    </div>
+
+    <div id="petRejectModal" class="pet-reject-modal" hidden>
+      <div class="pet-reject-sheet" role="dialog" aria-labelledby="petRejectTitle">
+        <div class="pet-reject-head">
+          <h2 id="petRejectTitle">为什么拒绝这个岗位？</h2>
+          <p class="pet-reject-sub" id="petRejectSubtitle">你的理由会帮助分析 AI 更懂你的偏好</p>
+          <button type="button" class="pet-reject-close" id="petRejectClose" title="关闭，继续查看岗位">×</button>
+        </div>
+        <div class="pet-reject-tags" id="petRejectTags"></div>
+        <textarea id="petRejectReason" class="pet-reject-textarea" rows="3" placeholder="补充说明（可选）"></textarea>
+        <div class="pet-reject-actions">
+          <button type="button" class="pet-job-btn pet-job-btn-ghost" id="petRejectCancel">再看看</button>
+          <div class="pet-reject-actions-main">
+            <button type="button" class="pet-job-btn pet-job-btn-ghost" id="petRejectSkip">跳过</button>
+            <button type="button" class="pet-job-btn pet-job-btn-primary" id="petRejectSubmit">提交并拒绝</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/static/pet.js"></script>
+</body>
+</html>

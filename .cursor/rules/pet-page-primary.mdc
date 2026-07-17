@@ -1,0 +1,36 @@
+---
+description: Web 产品功能以宠物页为主入口，新需求只改 pet 相关文件
+globs: src/pet_boss/web/**/*
+alwaysApply: true
+---
+
+# 宠物页为主界面
+
+## 入口
+
+- 默认首页：`/` → 重定向到 `/pet`
+- 启动方式：`boss web` 或 `boss profile web`
+
+## 新功能开发规则
+
+1. **所有面向用户的新功能、UI 改动、交互优化，只在宠物页实现**
+   - HTML：`src/pet_boss/web/static/pet.html`
+   - JS：`src/pet_boss/web/static/pet.js`
+   - CSS：`src/pet_boss/web/static/pet.css`
+   - 配置：`src/pet_boss/web/static/pet/desks.json`
+
+2. **后端 API 可共用**；若新增 API，在 `pet.js` 中调用并在对应 AI 工位面板或顶部搜岗栏暴露入口
+
+3. **静态缓存**：`/pet` 按 `pet.js` / `pet.css` 文件 mtime 自动拼 `?v=`，改完刷新即可，不必手动改版本号
+
+## 功能归属（宠物页）
+
+| 功能 | 入口 |
+|------|------|
+| 搜岗 / 停止 / 自动续跑 | 顶部搜岗栏 |
+| 侦察筛选 / 城市 / 清空历史 | 侦察 AI（ZC）工位 |
+| 通过分 | 分析 AI（FX）工位 |
+| BOSS 登录 / Token | 监控 AI（JK）工位 |
+| 秘书 / 邮箱 / 日报 | 秘书 AI（MS）工位 |
+| 档案 / 日报精选 | 资料柜 |
+| 通过岗位收藏 | 右侧岗位栏 |

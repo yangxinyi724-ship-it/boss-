@@ -1,0 +1,365 @@
+{
+  "canvas": { "width": 300, "height": 220 },
+  "scale": 3,
+  "characterScale": 0.8,
+  "restThresholdSec": 120,
+  "workSchedule": {
+    "autoStartScout": true,
+    "periods": [
+      { "start": "09:00", "end": "12:00" },
+      { "start": "13:00", "end": "17:00" },
+      { "start": "18:00", "end": "21:00" }
+    ]
+  },
+  "secretary": {
+    "duties": [
+      "resume_parse",
+      "portrait_json",
+      "daily_report_six_dim",
+    "daily_picks",
+      "feedback_collect",
+      "email",
+      "xhs_vlog"
+    ],
+    "reportSchedule": { "hour": 8, "minute": 30 },
+    "dailyPicks": { "defaultMax": 5 },
+    "sixDimensions": ["skill", "salary", "benefits", "experience", "development", "commute"],
+    "description": "解析简历生成画像→整编分析岗六维日报发邮件→收集反馈给分析AI"
+  },
+  "scout": {
+    "autoKeywords": true,
+    "queryPassDepth": { "min": 1, "max": 6 },
+    "queryExhaustCooldownHours": 48,
+    "description": "根据秘书画像自动生成搜索词；每组关键词翻到末页后再切换下一组（不按通过岗数换词）；列表扫完的搜索词冷却 48 小时"
+  },
+  "background": "office-room.png",
+  "assetVersion": 3,
+  "backgroundVersion": 3,
+  "clips": {
+    "sit": "sit.gif",
+    "work": "work.gif",
+    "walk": ["walk1.gif", "walk2.gif"],
+    "run": ["run1.gif", "run2.gif", "run3.gif"],
+    "sleepShort": "sleep1.gif",
+    "sleepLong": "sleep2.gif"
+  },
+  "futureClips": {
+    "eat": ["eat1.gif", "eat2.gif"]
+  },
+  "move": {
+    "walkSpeed": 10,
+    "runSpeed": 20,
+    "minDurationMs": 280,
+    "maxDurationMs": 8000
+  },
+  "activity": {
+    "bounds": {
+      "x": 45,
+      "y": 66,
+      "w": 230,
+      "h": 140,
+      "excludeRects": [
+        { "x": 65, "y": 80, "w": 85, "h": 120, "label": "工位区（不可溜达）" }
+      ]
+    },
+    "interactChance": 0.45,
+    "pauseMinMs": 600,
+    "pauseMaxMs": 1800,
+    "switchMidMove": true,
+    "interactables": []
+  },
+  "bowls": [
+    {
+      "id": "food",
+      "label": "食盆",
+      "x": 268,
+      "y": 98,
+      "agentX": 260,
+      "agentY": 86,
+      "clip": "eat",
+      "pauseMs": 2400,
+      "usesWhenFull": 2,
+      "full": "wan2.png",
+      "empty": "wan1.png",
+      "defaultFull": true
+    },
+    {
+      "id": "water",
+      "label": "水碗",
+      "x": 268,
+      "y": 203,
+      "agentX": 261,
+      "agentY": 192,
+      "clip": "eat",
+      "pauseMs": 2200,
+      "usesWhenFull": 2,
+      "full": "shui2.png",
+      "empty": "shui1.png",
+      "defaultFull": true
+    }
+  ],
+  "resumeDesk": {
+    "name": "default",
+    "upload": {
+      "x": 123,
+      "y": 193,
+      "image": "jian.png",
+      "label": "点击上传 PDF 简历"
+    },
+    "display": {
+      "x": 120,
+      "y": 190,
+      "image": "jianli.png",
+      "label": "简历"
+    },
+    "delete": {
+      "x": 108,
+      "y": 183,
+      "image": "shan.gif",
+      "label": "点击删除简历"
+    }
+  },
+  "documentCabinet": {
+    "x": 72,
+    "y": 81,
+    "image": "资料柜.png",
+    "scale": 1,
+    "label": "资料柜 · 查看档案"
+  },
+  "deskPlates": [
+    {
+      "agentId": "JK",
+      "role": "monitor",
+      "label": "监控 AI",
+      "x": 79.5,
+      "y": 117,
+      "nameplate": "监控员.png",
+      "nameplateScale": 0.45,
+      "plateText": {
+        "text": "监控员",
+        "x": 1,
+        "y": 1.5,
+        "fontSize": 3,
+        "color": "#ffffff"
+      },
+      "panel": {
+        "x": 145,
+        "y": 95,
+        "image": "分析设置.png",
+        "closeButton": "关闭按钮.png",
+        "closeOffset": { "x": 165, "y": 20 },
+        "buttonImage": "小按钮.png",
+        "bossLoginText": "登录 BOSS",
+        "bossSyncText": "同步登录态",
+        "bossLogoutText": "退出登录",
+        "tokenPricing": {
+          "inputPerM": 1,
+          "inputCacheHitPerM": 0.02,
+          "outputPerM": 2,
+          "currencySymbol": "¥",
+          "label": "DeepSeek"
+        },
+        "layout": {
+          "body": { "width": "84%", "top": "50%" },
+          "bossActions": { "gap": 4, "marginTop": 2 },
+          "bossLoginButton": { "scale": 0.42 },
+          "bossLoginButtonText": { "fontSize": 4 },
+          "bossSyncButton": { "scale": 0.42 },
+          "bossSyncButtonText": { "fontSize": 4 },
+          "bossLogoutButton": { "scale": 0.42 },
+          "bossLogoutButtonText": { "fontSize": 4 }
+        }
+      }
+    },
+    {
+      "agentId": "ZC",
+      "role": "scout",
+      "label": "侦察 AI",
+      "x": 79.5,
+      "y": 178,
+      "nameplate": "侦察员.png",
+      "nameplateScale": 0.45,
+      "plateText": {
+        "text": "侦察员",
+        "x": 1,
+        "y": 1.5,
+        "fontSize": 3,
+        "color": "#ffffff"
+      },
+      "panel": {
+        "x": 145,
+        "y": 95,
+        "image": "分析设置.png",
+        "closeButton": "关闭按钮.png",
+        "closeOffset": { "x": 165, "y": 20 },
+        "buttonImage": "小按钮.png",
+        "confirmButtonText": "确认",
+        "layout": {
+          "body": { "width": "84%", "top": "50%" },
+          "confirmButton": { "scale": 0.55, "marginTop": 4, "alignSelf": "center" },
+          "confirmButtonText": { "fontSize": 6 }
+        }
+      }
+    },
+    {
+      "agentId": "FX",
+      "role": "analysis",
+      "label": "分析 AI",
+      "x": 145,
+      "y": 178,
+      "nameplate": "分析员.png",
+      "nameplateScale": 0.45,
+      "plateText": {
+        "text": "分析员",
+        "x": 3,
+        "y": 1.5,
+        "fontSize": 3,
+        "color": "#ffffff"
+      },
+      "panel": {
+        "x": 150,
+        "y": 108,
+        "image": "分析设置.png",
+        "closeButton": "关闭按钮.png",
+        "closeOffset": { "x": 165, "y": 20 },
+        "buttonImage": "小按钮.png",
+        "confirmButtonText": "确定",
+        "layout": {
+          "body": { "width": "84%", "top": "36%" },
+          "passLabel": { "fontSize": 5 },
+          "passHint": { "fontSize": 4 },
+          "careerToggle": { "fontSize": 5 },
+          "careerHint": { "fontSize": 4 },
+          "stageTitle": { "fontSize": 4 },
+          "stageOpt": { "fontSize": 5 },
+          "confirmButton": { "scale": 0.55, "marginTop": 2, "alignSelf": "center" },
+          "confirmButtonText": { "fontSize": 6 }
+        }
+      }
+    },
+    {
+      "agentId": "MS",
+      "role": "secretary",
+      "label": "秘书 AI",
+      "x": 143,
+      "y": 117,
+      "nameplate": "秘书.png",
+      "nameplateScale": 0.45,
+      "plateText": {
+        "text": "秘书",
+        "x": 5,
+        "y": 1.5,
+        "fontSize": 3,
+        "color": "#ffffff"
+      },
+      "panel": {
+        "x": 145,
+        "y": 95,
+        "image": "分析设置.png",
+        "closeButton": "关闭按钮.png",
+        "closeOffset": { "x": 165, "y": 20 },
+        "buttonImage": "小按钮.png",
+        "emailGuideText": "设置邮箱",
+        "inputImage": "输入框.png",
+        "actions": {
+          "careerChat": { "text": "职业方向对话" },
+          "portraitView": { "text": "求职画像查看" }
+        },
+        "confirmButtonText": "确认",
+          "layout": {
+          "body": { "width": "82%", "top": "50%" },
+          "emailRow": { "gap": 4, "alignItems": "center", "marginTop": 20, "marginBottom": 3 },
+          "authRow": { "gap": 4, "alignItems": "center", "marginBottom": 2 },
+          "authLabel": { "fontSize": 5 },
+          "authInputBox": { "scale": 0.5, "flex": 1 },
+          "authInputText": { "left": "10%", "top": "50%", "width": "80%", "fontSize": 5, "transform": "translateY(-50%)" },
+          "picksRow": { "gap": 4, "alignItems": "center", "marginBottom": 3 },
+          "picksLabel": { "fontSize": 5 },
+          "picksInput": { "width": 28, "fontSize": 5 },
+          "picksUnit": { "fontSize": 5 },
+          "emailGuideLabel": { "scale": 0.6 },
+          "emailGuideText": { "fontSize": 5 },
+          "inputBox": { "scale": 0.5, "flex": 1 },
+          "inputText": { "left": "10%", "top": "50%", "width": "80%", "fontSize": 5, "transform": "translateY(-50%)" },
+          "actions": { "marginTop": 2, "gap": 6 },
+          "careerButton": { "scale": 0.6 },
+          "careerButtonText": { "fontSize": 5 },
+          "portraitButton": { "scale": 0.6 },
+          "portraitButtonText": { "fontSize": 5 },
+          "confirmButton": { "scale": 0.5, "marginTop": 10, "alignSelf": "center" },
+          "confirmButtonText": { "fontSize": 5 }
+        }
+      }
+    }
+  ],
+  "destinations": {
+    "sofas": [
+      { "x": 109, "y": 70, "label": "沙发1" },
+      { "x": 254, "y": 70, "label": "沙发2" }
+    ]
+  },
+  "characters": {
+    "JK": {
+      "role": "monitor",
+      "label": "监控 AI",
+      "x": 85,
+      "y": 130,
+      "size": 0.7,
+      "bubble": { "headRatio": 0.5, "gapScreen": 5, "offsetX": 10, "fontSize": 3 },
+      "enabled": true,
+      "sleepVariants": 1,
+      "positions": { "work": { "x": 84, "y": 130 } },
+      "clips": { "walk": ["walk1.gif"] },
+      "move": { "walkSpeed": 38 },
+      "nest": { "x": 269, "y": 182 },
+      "shortRest": { "random": true, "options": ["idle", "stroll"] },
+      "stroll": { "move": "walk" },
+      "longRest": { "random": true, "options": ["nest", "sofa"], "move": "walk" }
+    },
+    "ZC": {
+      "role": "scout",
+      "label": "侦察 AI",
+      "x": 84,
+      "y": 157,
+      "bubble": { "headRatio": 0.6, "gapScreen": 4, "offsetX": 0, "fontSize": 3 },
+      "positions": { "work": { "x": 89, "y": 157 } },
+      "nest": { "x": 266, "y": 130 },
+      "shortRest": { "random": true, "options": ["idle", "stroll"] },
+      "longRest": { "random": true, "options": ["nest", "sofa"], "move": "random" },
+      "enabled": true,
+      "sleepVariants": 2,
+      "clips": { "eat": ["eat1.gif", "eat2.gif"] }
+    },
+    "FX": {
+      "role": "analysis",
+      "label": "分析 AI",
+      "x": 137,
+      "y": 157,
+      "bubble": { "headRatio": 0.6, "gapScreen": 4, "offsetX": 0, "fontSize": 3 },
+      "positions": { "work": { "x": 132, "y": 157 } },
+      "nest": { "x": 268, "y": 153 },
+      "shortRest": { "random": true, "options": ["idle", "stroll"] },
+      "longRest": { "random": true, "options": ["nest", "sofa"], "move": "random" },
+      "flipX": true,
+      "enabled": true,
+      "sleepVariants": 2,
+      "clips": { "eat": ["eat1.gif", "eat2.gif"] }
+    },
+    "MS": {
+      "role": "secretary",
+      "label": "秘书 AI",
+      "x": 137,
+      "y": 126,
+      "bubble": { "headRatio": 0.6, "gapScreen": 4, "offsetX": -8, "fontSize": 3 },
+      "enabled": true,
+      "sleepVariants": 2,
+      "positions": { "work": { "x": 132, "y": 126 } },
+      "shortRest": { "random": true, "options": ["idle"] },
+      "longRest": { "random": false, "destination": "nest", "move": "walk" },
+      "flipX": true,
+      "clips": { "eat": ["eat1.gif", "eat2.gif"] },
+      "nest": { "x": 268, "y": 109 }
+      
+    }
+  }
+}
