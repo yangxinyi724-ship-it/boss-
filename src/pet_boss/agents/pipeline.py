@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from threading import Event
 from typing import Any
 
-_ROUND_PAGES_MIN = 2
-_ROUND_PAGES_MAX = 3
+_ROUND_PAGES_MIN = 4
+_ROUND_PAGES_MAX = 7
 _SCOUT_DELAY_MIN_SEC = 3.0
 _SCOUT_DELAY_MAX_SEC = 8.0
 _BEFORE_PAGE_MIN_SEC = 2.0
@@ -39,11 +39,8 @@ _JOB_GLANCE_MIN_SEC = 0.3
 _JOB_GLANCE_MAX_SEC = 0.8
 _JOB_DEEP_MIN_SEC = 30.0
 _JOB_DEEP_MAX_SEC = 60.0
-_EARLY_ROUND_STOP_PROB = 0.55
-_EARLY_ROUND_MIN_RATIO = 0.5
-_FATIGUE_REST_MIN_SEC = 180.0
-_FATIGUE_REST_MAX_SEC = 360.0
-_FATIGUE_STOP_REASONS = ("看累了", "暂时没耐心了", "先去忙别的")
+_FATIGUE_REST_MIN_SEC = 120.0
+_FATIGUE_REST_MAX_SEC = 180.0
 _HEARTBEAT_INTERVAL_SEC = 30.0
 _HEARTBEAT_MIN_SLEEP_SEC = 45.0
 _RISK_ERROR_CODES = frozenset({"ACCOUNT_RISK", "RATE_LIMITED"})
@@ -74,6 +71,7 @@ from pet_boss.search_filters import (
 	SearchFilterCriteria,
 	SearchPipelinePlatformError,
 	SearchPipelineResult,
+	pages_substantially_overlap,
 	run_search_pipeline,
 )
 
@@ -612,38 +610,13 @@ def _round_page_cap(*, max_pages: int | None, continuous: bool) -> int | None:
 
 
 def _plan_round_browsing(round_page_cap: int | None) -> dict[str, Any]:
-	"""规划本轮浏览：可能在达到上限前提前结束，并触发疲劳长休息。"""
-	if round_page_cap is None or round_page_cap <= 2:
-		return {
-			"planned_cap": round_page_cap,
-			"effective_cap": round_page_cap,
-			"early_stop": False,
-			"fatigue": False,
-			"stop_reason": "",
-		}
-
-	if random.random() >= _EARLY_ROUND_STOP_PROB:
-		return {
-			"planned_cap": round_page_cap,
-			"effective_cap": round_page_cap,
-			"early_stop": False,
-			"fatigue": False,
-			"stop_reason": "",
-		}
-
-	min_stop = max(_ROUND_PAGES_MIN, int(round_page_cap * _EARLY_ROUND_MIN_RATIO))
-	min_stop = min(min_stop, round_page_cap - 1)
-	if round_page_cap <= min_stop:
-		effective = round_page_cap
-	else:
-		effective = random.randint(min_stop, round_page_cap - 1)
-	fatigue = random.random() < 0.65
+	"""本轮浏览计划：按页数上限扫满，不提前结束、不触发疲劳长休息。"""
 	return {
 		"planned_cap": round_page_cap,
-		"effective_cap": effective,
-		"early_stop": effective < round_page_cap,
-		"fatigue": fatigue,
-		"stop_reason": random.choice(_FATIGUE_STOP_REASONS),
+		"effective_cap": round_page_cap,
+		"early_stop": False,
+		"fatigue": False,
+		"stop_reason": "",
 	}
 
 
@@ -1553,6 +1526,7 @@ def iter_dual_agent_pipeline(
 
 		pages_this_round = 0
 		page_retries = 0
+		prev_page_jobs: list[dict[str, Any]] = []
 		round_page_cap = _round_page_cap(max_pages=max_pages, continuous=continuous)
 		base_plan = _plan_round_browsing(round_page_cap)
 		scout_ctx = {
@@ -1788,6 +1762,29 @@ def iter_dual_agent_pipeline(
 			pages_this_round += 1
 
 			jobs_to_process = list(search_result.items)
+			# 末页误判续翻时，BOSS 常重复返回上一页内容：按重合度判定扫完
+			if prev_page_jobs and pages_substantially_overlap(prev_page_jobs, jobs_to_process):
+				has_more = False
+				yield {
+					"type": "scout_list_exhausted",
+					"page": current_page,
+					"round": round_num,
+					"query": round_query,
+					"switch_query": depth.enabled,
+					"duplicate_page": True,
+					"message": (
+						f"「{round_query}」第 {current_page} 页与上一页岗位高度重合，"
+						f"判定已到列表末尾，不再继续翻页"
+					),
+					"stats": stats,
+				}
+				pending_query_exhaust_page = current_page
+				if depth.enabled or query_exhaust_cooldown_sec > 0:
+					pending_query_advance_on_exhaust = True
+				round_pages_exhausted = True
+				break
+			prev_page_jobs = list(jobs_to_process)
+
 			skipped_on_page = 0
 			is_last_planned_page = effective_cap is not None and pages_this_round >= effective_cap
 			if is_last_planned_page and round_plan.get("early_stop") and round_plan.get("fatigue"):

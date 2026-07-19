@@ -1,4 +1,4 @@
-"""侦察 AI 质量过滤 — 始终排除猎头/人力资源代招；筛半个月以上不活跃 HR。"""
+"""侦察 AI 质量过滤 — 始终排除猎头/人力资源代招；仅保留一周内活跃 HR。"""
 
 from __future__ import annotations
 
@@ -19,27 +19,31 @@ _AGENCY_BOSS_TITLE_HINTS: tuple[str, ...] = (
 	"RPO", "交付顾问", "招聘专员", "资深顾问", "职业顾问", "寻访顾问",
 )
 
-# 明确近期活跃（半个月内）
+# 明确一周内活跃
 _BOSS_RECENTLY_ACTIVE_RE = re.compile(
 	r"刚刚|今日|在线|小时|分钟|"
 	r"本日|当天|"
-	r"\d{1,2}日内|"
-	r"本周|这周|上周|"
-	r"近一?周|"
-	r"近两周|2周内|"
-	r"半月内|半个月内|"
-	r"本月|"
-	r"[12]月内",
+	r"[1-7]日内|"
+	r"本周|这周|"
+	r"近一?周|一周内|7日内",
 )
 
-# 明确长期不活跃（半个月以上；「离线」不在此列）
-_BOSS_LONG_INACTIVE_RE = re.compile(
-	r"3周前|"
-	r"[4-9]周前|"
+# 明确超过一周未活跃（「离线」不在此列）
+_BOSS_STALE_INACTIVE_RE = re.compile(
+	r"上周|"
+	r"[8-9]日内|"
+	r"\d{2,}日内|"
+	r"近两周|2周内|两周内|"
+	r"[2-9]周前|"
 	r"十周前|"
+	r"半月(?:内|前)?|半个?月(?:内|前)?|"
+	r"本月|"
+	r"\d+个?月内|"  # 「2月内活跃」= 最多两个月内，不算一周内
 	r"一?个?月前|"
 	r"\d+个?月前|"
 	r"(?:[2-9]|10|11|12)月前|"
+	r"\d+个?月(?:不|未)活跃|"
+	r"(?:长期|半年|一年).{0,6}(?:不|未)活跃|"
 	r"半年(?!(?:内|活跃))|"
 	r"1年|"
 	r"年前|"
@@ -47,12 +51,7 @@ _BOSS_LONG_INACTIVE_RE = re.compile(
 	r"长期未",
 )
 
-_BossActivityStatus = Literal["recent", "long_inactive", "unknown"]
-
-# 离线/未知：不参与活跃筛选
-_NEUTRAL_BOSS_STATUS = frozenset({
-	"", "离线", "offline", "不在线", "离开",
-})
+_BossActivityStatus = Literal["recent", "stale", "unknown"]
 
 
 def _is_neutral_boss_status(active: str) -> bool:
@@ -74,9 +73,18 @@ def _boss_title(job: dict[str, Any]) -> str:
 
 
 def _active_desc(job: dict[str, Any]) -> str:
+	"""优先用 activeTimeDesc / boss_active 原文；勿被 bossOnline 盖成「在线」。
+
+	BOSS 列表常同时带 bossOnline=true 与 activeTimeDesc=「2月内活跃」，
+	若先信 bossOnline 会把超一周岗位误放行。
+	"""
+	for key in ("boss_active", "activeTimeDesc", "activeDesc"):
+		text = str(job.get(key) or "").strip()
+		if text:
+			return text
 	if job.get("bossOnline"):
 		return "在线"
-	return str(job.get("boss_active") or job.get("activeTimeDesc") or "").strip()
+	return ""
 
 
 def _is_proxy_job(job: dict[str, Any]) -> bool:
@@ -91,25 +99,33 @@ def _boss_activity_status(active: str) -> _BossActivityStatus:
 	text = str(active or "").strip()
 	if _is_neutral_boss_status(text):
 		return "unknown"
+	# 先抓明确超一周/不活跃文案，避免「2月内」等被误判为近期
+	if _BOSS_STALE_INACTIVE_RE.search(text):
+		return "stale"
 	if _BOSS_RECENTLY_ACTIVE_RE.search(text):
 		return "recent"
-	if _BOSS_LONG_INACTIVE_RE.search(text):
-		return "long_inactive"
 
 	day_match = re.search(r"(\d{1,3})天前", text)
 	if day_match:
 		days = int(day_match.group(1))
-		if days <= 14:
+		if days <= 7:
 			return "recent"
-		if days >= 15:
-			return "long_inactive"
+		return "stale"
 
 	week_match = re.search(r"(\d+)周前", text)
 	if week_match:
 		weeks = int(week_match.group(1))
-		if weeks <= 2:
+		if weeks <= 0:
 			return "recent"
-		return "long_inactive"
+		return "stale"
+
+	# 「N周内」：仅 1 周内算近期
+	within_week = re.search(r"(\d+)周内", text)
+	if within_week:
+		weeks = int(within_week.group(1))
+		if weeks <= 1:
+			return "recent"
+		return "stale"
 
 	return "unknown"
 
@@ -142,15 +158,18 @@ def is_agency_hr_job(job: dict[str, Any]) -> tuple[bool, str]:
 
 
 def is_long_inactive_boss(job: dict[str, Any]) -> tuple[bool, str]:
-	"""判断招聘者是否半个月以上未活跃（离线/未知不筛）。"""
-	if job.get("bossOnline"):
-		return False, ""
+	"""判断招聘者是否超过一周未活跃（离线/未知不筛）。
+
+	有明确活跃文案时以文案为准，不因 bossOnline 短路放行。
+	"""
 	active = _active_desc(job)
+	if not active and job.get("bossOnline"):
+		active = "在线"
 	if _is_neutral_boss_status(active):
 		return False, ""
 	status = _boss_activity_status(active)
-	if status == "long_inactive":
-		return True, f"招聘者半个月以上未活跃：{active}"
+	if status == "stale":
+		return True, f"招聘者超过一周未活跃：{active}"
 	return False, ""
 
 

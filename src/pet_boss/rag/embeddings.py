@@ -33,10 +33,16 @@ def embed_texts(
 		response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
 		response.raise_for_status()
 	except httpx.HTTPStatusError as exc:
-		raise AIServiceError(
-			f"Embedding API 请求失败: HTTP {exc.response.status_code}",
-			status_code=exc.response.status_code,
-		) from exc
+		detail = ""
+		try:
+			body = exc.response.json()
+			detail = str(body.get("message") or body.get("error") or "")[:200]
+		except Exception:
+			detail = (exc.response.text or "")[:200]
+		msg = f"Embedding API 请求失败: HTTP {exc.response.status_code}"
+		if detail:
+			msg = f"{msg} — {detail}"
+		raise AIServiceError(msg, status_code=exc.response.status_code) from exc
 	except httpx.RequestError as exc:
 		raise AIServiceError(f"Embedding 网络请求失败: {exc}") from exc
 

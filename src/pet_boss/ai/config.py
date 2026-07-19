@@ -31,7 +31,10 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 	"ai_provider": None,
 	"ai_model": None,
 	"ai_base_url": None,
+	"ai_embedding_provider": None,
 	"ai_embedding_model": None,
+	"ai_embedding_base_url": None,
+	"ai_embedding_api_key": None,
 	"ai_rag_enabled": True,
 	"ai_temperature": 0.7,
 	"ai_max_tokens": 4096,
@@ -39,6 +42,11 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 	"token_price_input_per_m": 1.0,
 	"token_price_output_per_m": 2.0,
 }
+
+# DeepSeek / Moonshot 等对话接口通常不提供 /embeddings
+_PROVIDERS_WITH_NATIVE_EMBEDDING = frozenset({
+	"openai", "qwen", "zhipu", "siliconflow", "openrouter",
+})
 
 _EMBEDDING_MODEL_BY_PROVIDER: dict[str, str] = {
 	"openai": "text-embedding-3-small",
@@ -50,21 +58,64 @@ _EMBEDDING_MODEL_BY_PROVIDER: dict[str, str] = {
 }
 
 
+def resolve_embedding_provider(config: dict[str, Any]) -> str | None:
+	"""独立 Embedding 平台；未设时回退到对话 provider。"""
+	explicit = config.get("ai_embedding_provider")
+	if explicit:
+		return str(explicit)
+	chat = config.get("ai_provider")
+	return str(chat) if chat else None
+
+
 def resolve_embedding_model(config: dict[str, Any]) -> str:
 	explicit = config.get("ai_embedding_model")
 	if explicit:
 		return str(explicit)
-	provider = str(config.get("ai_provider") or "")
+	provider = resolve_embedding_provider(config) or ""
 	return _EMBEDDING_MODEL_BY_PROVIDER.get(provider, "text-embedding-3-small")
+
+
+def resolve_embedding_base_url(config: dict[str, Any]) -> str | None:
+	"""独立 Embedding 网关（可与对话 provider 不同，例如 DeepSeek 聊天 + 硅基流动 Embedding）。"""
+	explicit = config.get("ai_embedding_base_url")
+	if explicit:
+		return str(explicit).rstrip("/")
+	provider = config.get("ai_embedding_provider")
+	if provider and provider in PROVIDER_BASE_URLS:
+		url = PROVIDER_BASE_URLS[provider]
+		return str(url).rstrip("/") if url else None
+	return None
+
+
+def resolve_embedding_api_key(config: dict[str, Any]) -> str | None:
+	"""仅读 config 明文；加密的 Embedding Key 请用 AIConfigStore.get_embedding_api_key()。"""
+	explicit = config.get("ai_embedding_api_key")
+	if explicit:
+		return str(explicit)
+	return None
+
+
+def has_embedding_endpoint(config: dict[str, Any] | None = None) -> bool:
+	"""是否具备可用的 Embedding 端点（原生平台或独立网关/provider）。"""
+	if config is None:
+		return True
+	if resolve_embedding_base_url(config):
+		return True
+	provider = str(config.get("ai_provider") or "")
+	return bool(provider and provider in _PROVIDERS_WITH_NATIVE_EMBEDDING)
 
 
 def rag_enabled(config: dict[str, Any] | None = None) -> bool:
 	if config is None:
 		return True
 	value = config.get("ai_rag_enabled")
+	if value is False:
+		return False
 	if value is None:
-		return True
-	return bool(value)
+		value = True
+	if not value:
+		return False
+	return has_embedding_endpoint(config)
 
 
 class AIConfigStore:
@@ -75,6 +126,7 @@ class AIConfigStore:
 		self._ai_dir = data_dir / "ai"
 		self._ai_dir.mkdir(parents=True, exist_ok=True)
 		self._key_path = self._ai_dir / "api_key.enc"
+		self._embedding_key_path = self._ai_dir / "embedding_api_key.enc"
 		self._config_path = self._ai_dir / "config.json"
 		self._auth_dir = data_dir / "auth"
 
@@ -128,6 +180,32 @@ class AIConfigStore:
 		except (InvalidToken, ValueError):
 			return None
 		return plaintext.decode("utf-8")
+
+	def save_embedding_api_key(self, key: str) -> None:
+		"""Encrypt and persist the Embedding API key (可与对话 Key 不同)。"""
+		fernet = Fernet(self._derive_key())
+		encrypted = fernet.encrypt(key.encode("utf-8"))
+		self._embedding_key_path.write_bytes(encrypted)
+
+	def get_embedding_api_key(self) -> str | None:
+		"""独立 Embedding Key：优先加密文件，其次 config 明文，最后回退对话 Key。"""
+		if self._embedding_key_path.exists():
+			fernet = Fernet(self._derive_key())
+			try:
+				plaintext = fernet.decrypt(self._embedding_key_path.read_bytes())
+				return plaintext.decode("utf-8")
+			except (InvalidToken, ValueError):
+				pass
+		config = self.load_config()
+		explicit = resolve_embedding_api_key(config)
+		if explicit:
+			return explicit
+		# 仅当 Embedding 与对话走同一平台时，复用对话 Key
+		emb_provider = config.get("ai_embedding_provider")
+		chat_provider = config.get("ai_provider")
+		if emb_provider and emb_provider != chat_provider:
+			return None
+		return self.get_api_key()
 
 	def save_config(self, **kwargs: Any) -> None:
 		"""Save configuration, merging with existing values."""

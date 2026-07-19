@@ -38,15 +38,20 @@ def _make_client() -> BossClient:
 
 def test_search_jobs_minimal_params():
 	client = _make_client()
+	client.resume_expect = MagicMock(return_value={"code": 0, "zpData": {"expectList": []}})
 	client.search_jobs("python")
 	call = client._browser_request.call_args
 	assert call.args == ("GET", endpoints.SEARCH_URL)
 	assert call.kwargs["params"]["query"] == "python"
 	assert call.kwargs["params"]["page"] == 1
+	assert call.kwargs["params"]["scene"] == 1
+	assert call.kwargs["params"]["pageSize"] == 15
+	assert "encryptExpectId" in call.kwargs["params"]
 
 
 def test_search_jobs_with_page():
 	client = _make_client()
+	client.resume_expect = MagicMock(return_value={"code": 0, "zpData": {"expectList": []}})
 	client.search_jobs("python", page=3)
 	call = client._browser_request.call_args
 	assert call.kwargs["params"]["page"] == 3
@@ -55,6 +60,7 @@ def test_search_jobs_with_page():
 def test_search_jobs_all_filter_codes_applied():
 	"""验证 8 个 filter 的 code 映射全部走通。"""
 	client = _make_client()
+	client.resume_expect = MagicMock(return_value={"code": 0, "zpData": {"expectList": []}})
 	# 用已知合法值
 	client.search_jobs(
 		"python",

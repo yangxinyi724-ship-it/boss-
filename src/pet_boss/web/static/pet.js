@@ -638,6 +638,11 @@ async function fetchFilteredAnalysis() {
   return parsePetApiResponse(resp, "无法读取分析筛掉记录");
 }
 
+async function fetchPassedAnalysis() {
+  const resp = await fetch("/api/boss/analysis/passed?limit=200", { cache: "no-store" });
+  return parsePetApiResponse(resp, "无法读取分析通过记录");
+}
+
 async function fetchDailyActionPlan(refresh = false) {
   const qs = refresh ? "?refresh=1" : "";
   const resp = await fetch(`/api/secretary/daily-action-plan${qs}`, { cache: "no-store" });
@@ -799,7 +804,7 @@ function formatReviewPlanHtml(review) {
       <div>决策：${escHtml(decisionLabel)}${initial != null && finalScore != null ? ` · ${initial} → ${finalScore} 分` : ""}</div>
       ${reasons ? `<div>复核理由：${reasons}</div>` : ""}
       ${risks ? `<div>补充风险：${risks}</div>` : ""}
-      ${(review.rag_references || []).length ? `<div class="pet-rag-ref-inline">${formatRagReferencesHtml(review.rag_references)}</div>` : ""}
+      <div class="pet-rag-ref-inline">${formatRagReferencesHtml(review.rag_references, review.rag_meta)}</div>
     </div>
   `;
 }
@@ -900,10 +905,13 @@ async function renderScoutStrategyPlanPanel(container) {
   container.innerHTML = formatScoutStrategyPlanHtml(data);
 }
 
-function formatRagReferencesHtml(refs) {
+function formatRagReferencesHtml(refs, ragMeta, missMessage) {
   const items = Array.isArray(refs) ? refs : [];
   if (!items.length) {
-    return `<p class="pet-archive-hint">本次分析未命中向量库中的相似历史案例（可能尚无足够历史，或 Embedding 未启用）。</p>`;
+    const reason = (missMessage || ragMeta?.message || "").trim()
+      || "该岗位分析当时未写入 RAG 参考；分析打分本身不受影响。";
+    return `<p class="pet-archive-hint">本次分析未展示向量参考案例。</p>
+      <p class="pet-archive-hint"><b>原因：</b>${escHtml(reason)}</p>`;
   }
   const rows = items.map((ref, i) => {
     const status = ragStatusLabel(ref.status || ref.source_type);
@@ -982,7 +990,7 @@ function formatFilteredAnalysisDetailHtml(item) {
       ${risks ? `<div class="pet-learning-log-section"><b>分析风险</b><div>${risks}</div></div>` : ""}
       <div class="pet-learning-log-section">
         <b>本次分析参考的历史案例（向量 RAG）</b>
-        ${formatRagReferencesHtml(item.rag_references)}
+        ${formatRagReferencesHtml(item.rag_references, item.rag_meta, item.rag_miss_message)}
       </div>
       ${formatReviewPlanHtml(item.analysis_review_plan || (item.job || {}).analysis_review_plan)}
       <div class="pet-shortlist-actions">
@@ -1035,6 +1043,191 @@ async function renderFilteredAnalysisPanel(container) {
   container.innerHTML = formatFilteredAnalysisListContent(data);
   wireFilteredAnalysisPanel(container, items);
   petDocumentCabinet?.clearNew("filtered_analysis");
+}
+
+function summarizePassedReasonsBrief(item) {
+  const reasons = Array.isArray(item?.analysis_reason) ? item.analysis_reason : [];
+  if (!reasons.length) return "";
+  const text = reasons.slice(0, 2).join("；");
+  return text.length > 56 ? `${text.slice(0, 56)}…` : text;
+}
+
+function formatPassedAnalysisListContent(data) {
+  const items = data?.items || [];
+  if (!items.length) {
+    return `
+      <p class="pet-archive-hint">暂无历史分析通过岗位。</p>
+      <p class="pet-archive-hint">分析 AI 判定通过的岗位会自动记录在此，可随时回看评分与通过理由。</p>
+    `;
+  }
+  const rows = items.map((item, i) => {
+    const brief = escHtml(summarizePassedReasonsBrief(item) || "已通过分析");
+    const when = escHtml(formatShortlistTime(item.analyzed_at));
+    const score = item.analysis_score != null ? `分析 ${item.analysis_score} 分` : "";
+    const ragChip = summarizeRagReferencesBrief(item.rag_references);
+    return `
+      <button type="button" class="pet-learning-log-row pet-passed-log-row" data-index="${i}">
+        <span class="pet-learning-log-row-main">
+          <span class="pet-learning-log-row-title">${escHtml(item.title || "岗位")}</span>
+          <span class="pet-learning-log-row-meta">${escHtml(item.company || "")}${score ? ` · ${escHtml(score)}` : ""}${when ? ` · ${when}` : ""}</span>
+          <span class="pet-learning-log-row-brief">${brief}</span>
+        </span>
+        <span class="pet-learning-log-row-side">
+          ${ragChip ? `<span class="pet-learning-log-row-chips">${escHtml(ragChip)}</span>` : ""}
+          <span class="pet-learning-log-row-chevron">›</span>
+        </span>
+      </button>
+    `;
+  }).join("");
+  return `
+    <p class="pet-learning-log-summary">共 ${items.length} 个历史通过岗位 · 点击查看详情</p>
+    <div class="pet-learning-log-list">${rows}</div>
+  `;
+}
+
+function formatPassedAnalysisDetailHtml(item) {
+  const reasons = (item.analysis_reason || [])
+    .map((r) => escHtml(r))
+    .join("；");
+  const risks = (item.analysis_risk || [])
+    .map((r) => escHtml(r))
+    .join("；");
+  const when = formatShortlistTime(item.analyzed_at);
+  const sid = escHtml(item.security_id || "");
+  const jid = escHtml(item.job_id || "");
+  const title = escHtml(item.title || "岗位");
+  const company = escHtml(item.company || "");
+  const city = escHtml(item.city || "");
+  const salary = escHtml(item.salary || "");
+  const queryHint = [item.search_query, item.search_city].filter(Boolean).join(" · ");
+  return `
+    <div class="pet-learning-log-detail">
+      <button type="button" class="pet-learning-log-back" data-action="back">← 返回列表</button>
+      <h3 class="pet-learning-log-title">${title}</h3>
+      <p class="pet-learning-log-meta">${company} · ${salary || "-"} · ${city || "-"}${item.analysis_score != null ? ` · 分析 ${item.analysis_score} 分` : ""}${when ? ` · ${escHtml(when)}` : ""}</p>
+      ${queryHint ? `<p class="pet-learning-log-meta">来源搜索：${escHtml(queryHint)}</p>` : ""}
+      <div class="pet-learning-log-section">
+        <b>通过理由</b>
+        <div>${reasons || "（无详细理由）"}</div>
+      </div>
+      ${risks ? `<div class="pet-learning-log-section"><b>分析风险</b><div>${risks}</div></div>` : ""}
+      <div class="pet-learning-log-section">
+        <b>本次分析参考的历史案例（向量 RAG）</b>
+        ${formatRagReferencesHtml(item.rag_references, item.rag_meta, item.rag_miss_message)}
+      </div>
+      ${formatReviewPlanHtml(item.analysis_review_plan || (item.job || {}).analysis_review_plan)}
+      <div class="pet-shortlist-actions">
+        <button type="button" class="pet-archive-btn pet-archive-btn-primary pet-passed-shortlist"
+          data-sid="${sid}" data-jid="${jid}" data-title="${title}"
+          data-company="${company}" data-city="${city}" data-salary="${salary}">加入候选池</button>
+        <button type="button" class="pet-archive-btn pet-passed-open" data-sid="${sid}" data-jid="${jid}">BOSS 查看</button>
+        <button type="button" class="pet-archive-btn pet-passed-reject"
+          data-sid="${sid}" data-jid="${jid}" data-title="${title}" data-company="${company}">不感兴趣</button>
+      </div>
+    </div>
+  `;
+}
+
+function wirePassedAnalysisPanel(container, items) {
+  container.querySelectorAll(".pet-passed-log-row").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.index);
+      const item = items[idx];
+      if (!item) return;
+      container.innerHTML = formatPassedAnalysisDetailHtml(item);
+      container.querySelector("[data-action='back']")?.addEventListener("click", () => {
+        container.innerHTML = formatPassedAnalysisListContent({ items });
+        wirePassedAnalysisPanel(container, items);
+      });
+      container.querySelector(".pet-passed-open")?.addEventListener("click", async (ev) => {
+        const openBtn = ev.currentTarget;
+        const jobId = openBtn.dataset.jid || "";
+        if (!jobId) return;
+        openBtn.disabled = true;
+        try {
+          const data = await petOpenBossJob({
+            job_id: jobId,
+            security_id: openBtn.dataset.sid || "",
+          });
+          setStatus(data?.message || "已在登录态浏览器打开岗位");
+        } catch (err) {
+          setStatus(err?.message || "打开岗位失败");
+        } finally {
+          openBtn.disabled = false;
+        }
+      });
+      container.querySelector(".pet-passed-shortlist")?.addEventListener("click", async (ev) => {
+        const addBtn = ev.currentTarget;
+        const jobId = addBtn.dataset.jid || "";
+        if (!jobId) return;
+        addBtn.disabled = true;
+        try {
+          await petShortlistJob({
+            security_id: addBtn.dataset.sid || "",
+            job_id: jobId,
+            title: addBtn.dataset.title || "",
+            company: addBtn.dataset.company || "",
+            city: addBtn.dataset.city || "",
+            salary: addBtn.dataset.salary || "",
+          });
+          petDocumentCabinet?.markNew("shortlist");
+          setStatus("已加入候选池");
+        } catch (err) {
+          setStatus(err?.message || "加入候选池失败");
+        } finally {
+          addBtn.disabled = false;
+        }
+      });
+      container.querySelector(".pet-passed-reject")?.addEventListener("click", async (ev) => {
+        const rejectBtn = ev.currentTarget;
+        if (!(rejectBtn instanceof HTMLButtonElement) || rejectBtn.disabled) return;
+        const jobId = rejectBtn.dataset.jid || "";
+        if (!jobId) return;
+        rejectBtn.disabled = true;
+        try {
+          const dialog = await petShowRejectDialog({
+            title: rejectBtn.dataset.title || item.title || "",
+            company: rejectBtn.dataset.company || item.company || "",
+          });
+          if (dialog.cancelled) {
+            rejectBtn.disabled = false;
+            return;
+          }
+          await petRejectJob({
+            security_id: rejectBtn.dataset.sid || item.security_id || "",
+            job_id: jobId,
+            title: rejectBtn.dataset.title || item.title || "",
+            company: rejectBtn.dataset.company || item.company || "",
+            reason: dialog.reason || "",
+            tags: dialog.tags || [],
+            analysis_score: item.analysis_score ?? null,
+            analysis_reason: item.analysis_reason || [],
+            analysis_risk: item.analysis_risk || [],
+            remove_from_passed: true,
+          });
+          const nextItems = items.filter((_, i) => i !== idx);
+          petDocumentCabinet?.markNew("reject_learning");
+          setStatus(dialog.skipped && !dialog.reason && !(dialog.tags || []).length
+            ? "已标记不感兴趣 · 已从分析通过移除"
+            : "已记录拒绝理由 · 已从分析通过移除");
+          container.innerHTML = formatPassedAnalysisListContent({ items: nextItems });
+          wirePassedAnalysisPanel(container, nextItems);
+        } catch (err) {
+          rejectBtn.disabled = false;
+          setStatus(err?.message || "操作失败");
+        }
+      });
+    });
+  });
+}
+
+async function renderPassedAnalysisPanel(container) {
+  container.innerHTML = `<p class="pet-archive-hint">加载分析通过记录…</p>`;
+  const data = await fetchPassedAnalysis();
+  const items = data?.items || [];
+  container.innerHTML = formatPassedAnalysisListContent(data);
+  wirePassedAnalysisPanel(container, items);
+  petDocumentCabinet?.clearNew("passed_analysis");
 }
 
 async function fetchLearningLog(limit = 100) {
@@ -3203,6 +3396,14 @@ class PetArchiveManager {
         locked: "",
       },
       {
+        id: "passed_analysis",
+        icon: "✅",
+        title: "分析通过",
+        sub: "历史分析通过岗位与理由",
+        available: true,
+        locked: "",
+      },
+      {
         id: "filtered_analysis",
         icon: "🚫",
         title: "分析筛掉",
@@ -3266,6 +3467,7 @@ class PetArchiveManager {
       daily_action_plan: "今日行动计划",
       scout_strategy_plan: "侦察策略",
       shortlist: "候选池",
+      passed_analysis: "分析通过",
       filtered_analysis: "分析筛掉",
       reject_learning: "拒绝与学习记录",
     };
@@ -3314,6 +3516,8 @@ class PetArchiveManager {
         petDocumentCabinet?.clearNew("scout_strategy_plan");
       } else if (reportId === "shortlist") {
         await renderShortlistPanel(this.reportBody);
+      } else if (reportId === "passed_analysis") {
+        await renderPassedAnalysisPanel(this.reportBody);
       } else if (reportId === "filtered_analysis") {
         await renderFilteredAnalysisPanel(this.reportBody);
       } else if (reportId === "reject_learning") {
@@ -4976,15 +5180,12 @@ function rememberPetScoutHeaderStats(stats) {
 }
 
 function refreshPetHeaderScoutStats() {
-  if (!(petLocalScouting && !scheduleOffHours && !petScoutOffHoursPaused)) return;
   const el = document.getElementById("petStatus");
   if (!el) return;
   el.textContent = formatPetHeaderScoutStats(petScoutHeaderStats);
 }
 
 function refreshPetScoutStatusLine(event) {
-  if (scheduleOffHours || petScoutOffHoursPaused) return;
-  if (!petLocalScouting) return;
   const q = String(
     event?.query
     || event?.next_query
@@ -5002,7 +5203,6 @@ function refreshPetScoutStatusLine(event) {
 
 function updatePetScoutStreamStatus(event) {
   if (!event?.stats && event?.type !== "scout_heartbeat") return;
-  if (petScoutOffHoursPaused || scheduleOffHours) return;
   refreshPetScoutStatusLine(event);
 }
 
@@ -5015,19 +5215,26 @@ function applyScoutStreamStateFromEvent(ev) {
   } else if (type === "round_pause") {
     const sec = ev.pause_sec ?? ev.remaining_sec ?? 60;
     setOfficeRest(true, sec, false);
-  } else if (
-    type === "round_resume" ||
-    type === "page_start" ||
-    type === "search_fetch" ||
-    type === "page_turn"
-  ) {
+  } else if (type === "round_resume" || type === "round_start") {
+    // 仅正式结束休息；勿用 page_start 等页码事件唤醒（ring 回放会误伤）
     if (officeResting) resumeAfterRest();
     petMonitorSidebar?.exitRestState?.();
-  } else if (type === "scout_heartbeat" && officeResting) {
-    const sec = ev.remaining_sec ?? 0;
-    if (sec <= 0) {
-      resumeAfterRest();
-      petMonitorSidebar?.exitRestState?.();
+  } else if (type === "scout_heartbeat") {
+    const sec = Number(ev.remaining_sec ?? 0);
+    const msg = String(ev.message || "");
+    if (officeResting) {
+      // 仅认轮次休息结束心跳；监控暂停心跳也是 remaining_sec=0，勿误唤醒
+      if (sec <= 0 && /即将继续|休息结束/.test(msg)) {
+        resumeAfterRest();
+        petMonitorSidebar?.exitRestState?.();
+      }
+    } else if (
+      sec > 0.5
+      && /本轮休息|疲劳休息|轮次休息/.test(msg)
+      && !scheduleOffHours
+    ) {
+      // 心跳补进休息态（例如切后台时丢了 round_pause）
+      setOfficeRest(true, sec, /疲劳/.test(msg));
     }
   }
 }
@@ -5075,10 +5282,17 @@ function wirePetScoutVisibilityAck() {
     // 隐藏时也继续跑：只上报 hidden，后端放宽超时，不暂停管道
     sendPetScoutAck();
     if (document.hidden) {
-      setStatus("页面已隐藏，搜岗继续在后台运行…");
+      // 标题小字始终只显示统计；隐藏提示只进监控侧栏动作
+      refreshPetHeaderScoutStats();
+      if (petMonitorSidebar) {
+        const msg = "页面已隐藏/最小化，搜岗继续在后台运行";
+        petMonitorSidebar._pushAction?.(msg, "page_hidden_continue");
+        petMonitorSidebar._render?.();
+      }
       return;
     }
     // 回到前台：强制追上服务端最新页码/状态（浏览器后台时 UI 可能没刷新）
+    refreshPetHeaderScoutStats();
     void syncScoutLiveFromServer({ resumeUi: true });
     while (petScoutEventQueue.length) {
       drainPetScoutEventQueue();
@@ -5100,7 +5314,26 @@ async function syncScoutLiveFromServer(opts = {}) {
   }
 }
 
-/** 从 live 快照补拉：页码/统计/已通过岗位（SSE 丢事件后的兜底） */
+/** 从 live 快照补拉：页码/统计/已通过岗位/计划休息（SSE 丢事件后的兜底） */
+let petScoutCatchUpActionKey = "";
+
+function pushScoutCatchUpActionFromLive(data) {
+  if (!petMonitorSidebar || !petLocalScouting) return;
+  const msg = String(data?.last_message || "").trim();
+  if (!msg) return;
+  // 本地/技术文案不进「最近动作」，避免盖住真实搜岗进展
+  if (/^页面已隐藏|^资料柜|^Web SSE|快照同步|消费落后/.test(msg)) return;
+  const type = String(data.server_type || "scout_catchup");
+  const key = `${type}|${msg}`;
+  if (key === petScoutCatchUpActionKey) return;
+  petScoutCatchUpActionKey = key;
+  if (!officeResting) {
+    petMonitorSidebar.progress = msg;
+  }
+  const label = msg.length > 56 ? `${msg.slice(0, 56)}…` : msg;
+  petMonitorSidebar._pushAction?.(label, type);
+}
+
 function applyScoutLiveCatchUp(data, opts = {}) {
   if (!data || typeof data !== "object") return;
   if (data.server_query || data.server_page) {
@@ -5126,23 +5359,60 @@ function applyScoutLiveCatchUp(data, opts = {}) {
     }
     if (added > 0) refreshPetHeaderScoutStats();
   }
-  if (data.last_error) {
+
+  const pauseSec = Number(data.pause_remaining_sec);
+  const inPlannedPause =
+    !!data.in_planned_pause
+    && Number.isFinite(pauseSec)
+    && pauseSec > 0.5
+    && !scheduleOffHours
+    && String(data.pause_type || "") !== "off_hours_pause";
+
+  if (inPlannedPause && petLocalScouting) {
+    const isFatigue =
+      data.pause_type === "round_fatigue_pause"
+      || /疲劳/.test(String(data.pause_message || data.last_message || ""));
+    setOfficeRest(true, pauseSec, isFatigue);
+    const restMsg =
+      data.pause_message
+      || data.last_message
+      || (isFatigue ? "疲劳休息中…" : "本轮休息中…");
+    if (petMonitorSidebar) {
+      petMonitorSidebar.progress = restMsg;
+      petMonitorSidebar.stage = isFatigue ? "疲劳休息" : "本轮休息";
+      petMonitorSidebar.streamState = "resting";
+      petMonitorSidebar.streamHint = "";
+    }
+    setStatus(formatRoundRestStatus(pauseSec, restMsg));
+    refreshIdleAgentTasks();
+  } else if (data.last_error) {
     petMonitorSidebar?.setStreamState?.("error", data.last_error);
     if (!petLocalScouting) setStatus(data.last_error);
   } else if (data.ui_stale || data.last_warn) {
     petMonitorSidebar?.setStreamState?.(
-      petLocalScouting ? "streaming" : (petMonitorSidebar.streamState || "idle"),
+      petLocalScouting
+        ? (officeResting ? "resting" : "streaming")
+        : (petMonitorSidebar.streamState || "idle"),
       data.last_warn || "已从快照同步岗位进度",
     );
-  } else if (data.last_message && opts.resumeUi && petMonitorSidebar) {
+  }
+
+  // SSE 积压/后台节流时浏览事件会被丢：页码能靠快照更新，但「最近动作」不会。
+  // 用 last_message 补一条，避免停在几小时前的旧动作。
+  if (petLocalScouting && !inPlannedPause) {
+    pushScoutCatchUpActionFromLive(data);
+  } else if (data.last_message && opts.resumeUi && petMonitorSidebar && !officeResting) {
     petMonitorSidebar.progress = data.last_message;
   }
-  if (opts.resumeUi && data.page_hidden === false && petLocalScouting) {
+
+  // 回到前台：只清「页面隐藏」展示，不要打断后端仍在进行的轮次休息
+  if (opts.resumeUi && data.page_hidden === false && petLocalScouting && !inPlannedPause && !officeResting) {
     petMonitorSidebar?.exitRestState?.();
     petMonitorSidebar?.setStreamState?.("streaming");
     if (
       petMonitorSidebar
-      && (petMonitorSidebar.stage === "页面隐藏暂停" || petMonitorSidebar.stage === "本轮休息")
+      && (petMonitorSidebar.stage === "页面隐藏暂停"
+        || petMonitorSidebar.stage === "页面隐藏（后台续跑）")
       && data.server_page > 0
     ) {
       petMonitorSidebar.stage = "列表翻页";
@@ -5461,16 +5731,42 @@ function initScoutHistorySidebar() {
   void refreshScoutHistorySidebar();
 }
 
-async function startPetScoutStream() {
-  if (petLocalScouting) {
+async function waitScoutInactive(timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     const live = await syncScoutLiveFromServer().catch(() => null);
-    if (live?.active) {
-      void subscribePetScoutEvents({ resume: true });
-      return;
-    }
-    petLocalScouting = false;
-    updatePetScoutControls(false);
+    if (!live?.active) return true;
+    await new Promise((r) => setTimeout(r, 250));
   }
+  const live = await syncScoutLiveFromServer().catch(() => null);
+  return !live?.active;
+}
+
+/** 用户点「开始搜岗」时：若后端已有任务则先停再按当前输入重启 */
+async function stopActiveScoutForRestart() {
+  const live = await syncScoutLiveFromServer().catch(() => null);
+  if (!live?.active && !petLocalScouting) return false;
+  petScoutStopRequested = true;
+  stopPetScoutAckPulse();
+  if (petScoutAbortController) {
+    try {
+      petScoutAbortController.abort();
+    } catch {
+      /* ignore */
+    }
+    petScoutAbortController = null;
+  }
+  await fetch("/api/boss/scout/stop", { method: "POST", keepalive: true }).catch(() => {});
+  await waitScoutInactive();
+  petLocalScouting = false;
+  petScoutStopRequested = false;
+  updatePetScoutControls(false);
+  return true;
+}
+
+async function startPetScoutStream() {
+  // 有输入关键词时必须按输入开搜：不能只订阅旧任务（否则会一直搜旧词如「RAG工程师」）
+  await stopActiveScoutForRestart();
 
   const queryEl = document.getElementById("petScoutQuery");
   const query = queryEl?.value?.trim() || "";
@@ -5502,6 +5798,7 @@ async function startPetScoutStream() {
   petScoutOffHoursPaused = false;
   petScoutJobCount = 0;
   petScoutHeaderStats = null;
+  petScoutCatchUpActionKey = "";
   startPetScoutAckPulse();
   petMonitorSidebar?.setStreamState("connecting");
   petMonitorSidebar?.setSearchContext(query || "", null);
@@ -5524,12 +5821,12 @@ async function startPetScoutStream() {
     profile_score: true,
     scout_filters,
     career_stage,
-    auto_keywords: true,
+    // 有输入：只搜用户词；留空：才用秘书画像自动生成
+    auto_keywords: !query,
   };
   if (pass_score != null) startBody.pass_score = pass_score;
 
   try {
-    // 若后端任务已在跑，start 会返回 already_running，直接订阅
     const startResp = await fetch("/api/boss/scout/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -5539,7 +5836,23 @@ async function startPetScoutStream() {
     if (!startResp.ok || !startJson?.ok) {
       throw new Error(startJson?.error?.message || `启动失败 (${startResp.status})`);
     }
-    await subscribePetScoutEvents({ resume: !!startJson.data?.already_running });
+    if (startJson.data?.already_running) {
+      // 竞态：再停一次后重试启动
+      await stopActiveScoutForRestart();
+      petLocalScouting = true;
+      startPetScoutAckPulse();
+      updatePetScoutControls(true);
+      const retryResp = await fetch("/api/boss/scout/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(startBody),
+      });
+      const retryJson = await retryResp.json().catch(() => ({}));
+      if (!retryResp.ok || !retryJson?.ok || retryJson.data?.already_running) {
+        throw new Error(retryJson?.error?.message || "无法按当前关键词重新启动搜岗，请先点停止后再试");
+      }
+    }
+    await subscribePetScoutEvents({ resume: false });
   } catch (e) {
     stopPetScoutAckPulse();
     resetPetScoutEventQueue();
@@ -5942,15 +6255,15 @@ async function saveSecretaryPanelSettings(email, maxDailyPicks, smtpAuthCode = "
   return `秘书设置已保存：${parts.join(" · ")}`;
 }
 
+/** 标题小字：永远只显示「已侦察 · 侦察通过 · 分析通过」；其它文案改写监控器最新进展 */
 function setStatus(text) {
-  const el = document.getElementById("petStatus");
-  if (!el) return;
-  // 搜岗进行中：标题小字只显示统计（已侦察/通过等），忽略休息/同步等其它文案
-  if (petLocalScouting && !scheduleOffHours && !petScoutOffHoursPaused) {
-    el.textContent = formatPetHeaderScoutStats(petScoutHeaderStats);
-    return;
-  }
-  el.textContent = text;
+  refreshPetHeaderScoutStats();
+  const msg = String(text || "").trim();
+  if (!msg || !petMonitorSidebar) return;
+  // 统计句本身不必再灌进监控器
+  if (/^已侦察\s+\d+/.test(msg)) return;
+  petMonitorSidebar.progress = msg;
+  petMonitorSidebar._scheduleRender?.() || petMonitorSidebar._render?.();
 }
 
 /** @type {PetJobSidebar | null} */
@@ -6191,21 +6504,18 @@ class PetMonitorSidebar {
     if (
       officeResting &&
       !scheduleOffHours &&
-      (type === "page_start" ||
-        type === "search_fetch" ||
-        type === "search_progress" ||
-      type === "page_done" ||
-      type === "page_turn" ||
-      type === "round_resume" ||
-        type === "round_start")
+      (type === "round_resume" || type === "round_start")
     ) {
       resumeAfterRest();
     }
 
     this.lastEventType = type;
     if (type === "page_start" || type === "search_fetch" || type === "search_progress" || type === "page_done" || type === "page_turn") {
-      this.stage = MONITOR_STAGE_BY_EVENT[type] || this.stage;
-      if (petLocalScouting && !scheduleOffHours && !petScoutOffHoursPaused) {
+      // 计划休息中保留「本轮休息」阶段，避免 ring 回放的页码事件把 UI 打回翻页
+      if (!officeResting) {
+        this.stage = MONITOR_STAGE_BY_EVENT[type] || this.stage;
+      }
+      if (petLocalScouting && !scheduleOffHours && !petScoutOffHoursPaused && !officeResting) {
         this.streamState = "streaming";
       }
     } else if (type === "round_start" || type === "round_resume") {
@@ -6215,11 +6525,12 @@ class PetMonitorSidebar {
       }
     } else if (type === "scout_heartbeat" && officeResting) {
       const sec = ev.remaining_sec ?? 0;
-      if (sec <= 0) {
+      const msg = ev.message || "";
+      if (sec <= 0 && /即将继续|休息结束/.test(msg)) {
         this.stage = MONITOR_STAGE_BY_EVENT.round_resume || "继续搜岗";
         this.streamState = petLocalScouting ? "streaming" : this.streamState;
-      } else {
-        this.stage = /疲劳/.test(ev.message || "") ? "疲劳休息" : "本轮休息";
+      } else if (sec > 0) {
+        this.stage = /疲劳/.test(msg) ? "疲劳休息" : "本轮休息";
         this.streamState = "resting";
       }
     }
@@ -6274,8 +6585,11 @@ class PetMonitorSidebar {
       this.stage = MONITOR_STAGE_BY_EVENT[type] || this.stage;
       this.streamState = "resting";
     } else if (type === "page_start" || type === "search_fetch" || type === "search_progress" || type === "page_done" || type === "page_turn") {
-      if (petLocalScouting && !scheduleOffHours && !petScoutOffHoursPaused) {
+      if (petLocalScouting && !scheduleOffHours && !petScoutOffHoursPaused && !officeResting) {
         this.streamState = "streaming";
+      }
+      if (!officeResting && MONITOR_STAGE_BY_EVENT[type]) {
+        this.stage = MONITOR_STAGE_BY_EVENT[type];
       }
     } else if (MONITOR_STAGE_BY_EVENT[type]) {
       this.stage = MONITOR_STAGE_BY_EVENT[type];
@@ -6906,8 +7220,8 @@ function truncateBubbleReason(text, maxLen = 22) {
 function isOfflineInactiveFailure(text) {
   const s = String(text || "").trim();
   if (!s || /^离线$/i.test(s)) return true;
-  return /(?:长期|半个月以上)?未活跃[：:]\s*离线\s*$/i.test(s)
-    || /(?:长期|半个月以上)?不活跃[：:]\s*离线\s*$/i.test(s);
+  return /(?:长期|半个月以上|超过一周)?未活跃[：:]\s*离线\s*$/i.test(s)
+    || /(?:长期|半个月以上|超过一周)?不活跃[：:]\s*离线\s*$/i.test(s);
 }
 
 function getScoutHardFailures(ev) {
@@ -7066,6 +7380,7 @@ function handleScoutEvent(ev, opts = {}) {
     if (type === "job_passed" && ev.job) {
       petJobSidebar?.addJob(ev.job);
       petScoutJobCount += 1;
+      petDocumentCabinet?.markNew("passed_analysis");
     }
     return;
   }
@@ -7115,7 +7430,8 @@ function handleScoutEvent(ev, opts = {}) {
       break;
 
     case "page_start":
-      if (officeResting) resumeAfterRest();
+      // 休息中忽略页码回放，避免「最新进展仍是休息、工位却在搜岗」
+      if (officeResting) break;
       if (shouldApplyWorkClips()) agents.ZC?.setClip("work");
       setAgentTask("ZC", `浏览第 ${ev.page ?? "?"} 页`);
       petMonitorSidebar?.syncFromApp();
@@ -7201,6 +7517,7 @@ function handleScoutEvent(ev, opts = {}) {
         petJobSidebar?.addJob(ev.job);
         petScoutJobCount += 1;
       }
+      petDocumentCabinet?.markNew("passed_analysis");
       if (ev.stats) rememberPetScoutHeaderStats(ev.stats);
       refreshPetHeaderScoutStats();
       break;
@@ -7252,16 +7569,16 @@ function handleScoutEvent(ev, opts = {}) {
 
     case "page_hidden_pause":
     case "page_hidden_continue":
-      setStatus(ev.message || "页面已隐藏，搜岗继续在后台运行…");
+      // 不写标题小字；也不覆盖「最新进展」里的休息/搜岗文案
+      refreshPetHeaderScoutStats();
       if (petMonitorSidebar && ev.message) {
-        petMonitorSidebar.progress = ev.message;
         petMonitorSidebar._pushAction?.(ev.message, ev.type || "page_hidden_continue", ev);
         petMonitorSidebar._render?.();
       }
       break;
 
     case "page_visible_resume":
-      setStatus(ev.message || "页面已恢复，正在同步进度…");
+      refreshPetHeaderScoutStats();
       void syncScoutLiveFromServer({ resumeUi: true });
       break;
 
@@ -7286,22 +7603,27 @@ function handleScoutEvent(ev, opts = {}) {
     case "scout_heartbeat": {
       if (officeResting && !scheduleOffHours) {
         const sec = ev.remaining_sec ?? 0;
-        if (sec <= 0) {
+        const msg = String(ev.message || "");
+        if (sec <= 0 && /即将继续|休息结束/.test(msg)) {
           resumeAfterRest();
           petMonitorSidebar?.exitRestState();
           setStatus(petLocalScouting ? "搜岗进行中 · 休息结束，继续工作" : "侦察进行中 · 休息结束，继续工作");
           petMonitorSidebar?.syncFromApp();
           break;
         }
-        const isFatigue = /疲劳/.test(ev.message || "");
+        if (sec <= 0) {
+          petMonitorSidebar?.syncFromApp();
+          break;
+        }
+        const isFatigue = /疲劳/.test(msg);
         applyRestClip("ZC", sec, isFatigue);
         applyRestClip("FX", sec, isFatigue);
         applyRestClip("JK", sec, isFatigue);
-        const restLabel = sec > 0 ? `休息 ${Math.ceil(sec)}s` : "休息中…";
+        const restLabel = `休息 ${Math.ceil(sec)}s`;
         setAgentTask("ZC", restLabel);
         setAgentTask("FX", restLabel);
         setAgentTask("JK", restLabel);
-        setStatus(formatRoundRestStatus(sec, ev.message));
+        setStatus(formatRoundRestStatus(sec, msg));
       }
       petMonitorSidebar?.syncFromApp();
       break;
@@ -7645,6 +7967,7 @@ async function initPetOffice() {
     if (hints.length) setStatus(hints.join(" · "));
   }
 
+  refreshPetHeaderScoutStats();
   refreshIdleAgentTasks();
 }
 

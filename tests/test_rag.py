@@ -117,3 +117,56 @@ def test_rag_hits_to_references():
 	refs = rag_hits_to_references(hits)
 	assert refs[0]["title"] == "C++"
 	assert refs[0]["similarity"] == 0.88
+
+
+def test_rag_miss_message_prefers_meta_message():
+	from pet_boss.rag.service import rag_miss_message_for_display
+
+	msg = rag_miss_message_for_display(
+		references=[],
+		rag_meta={"code": "below_threshold", "message": "相似度过低", "best_score": 0.1},
+	)
+	assert msg == "相似度过低"
+
+
+def test_rag_miss_message_legacy_empty_when_store_has_vectors():
+	from pet_boss.rag.service import rag_miss_message_for_display
+
+	msg = rag_miss_message_for_display(
+		references=[],
+		rag_meta={},
+		current_vector_count=85,
+	)
+	assert "未保存 RAG 参考" in msg or "未接入" in msg
+	assert "85" in msg
+
+
+def test_retrieve_analysis_rag_result_returns_meta(profile_store, monkeypatch):
+	from pet_boss.rag.service import retrieve_analysis_rag_result
+
+	ai = _FakeAIService()
+	monkeypatch.setattr(
+		"pet_boss.rag.service._embed_one",
+		lambda svc, text: ai._fake_vector(text),
+	)
+	job = {
+		"security_id": "s1",
+		"job_id": "j1",
+		"title": "C++开发工程师",
+		"company": "某科技",
+		"description": "负责嵌入式 C++ 开发",
+		"analysis_score": 82,
+	}
+	assert index_analysis_job(profile_store, ai, job, status="passed") is True
+
+	query = {
+		"security_id": "s9",
+		"job_id": "j9",
+		"title": "C++开发",
+		"description": "C++ 嵌入式方向",
+	}
+	bundle = retrieve_analysis_rag_result(profile_store, ai, query, top_k=2)
+	assert "references" in bundle
+	assert "meta" in bundle
+	assert bundle["meta"]["code"] in {"ok", "below_threshold"}
+	assert isinstance(bundle["meta"].get("vector_count"), int)

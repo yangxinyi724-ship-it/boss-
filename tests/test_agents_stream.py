@@ -165,11 +165,11 @@ def test_glance_dwell_is_hover_range():
 	pytest.skip("no glance sample in 30 draws")
 
 
-def test_plan_round_browsing_can_early_stop():
-	plans = [_plan_round_browsing(10) for _ in range(100)]
-	early = [p for p in plans if p["early_stop"]]
-	assert early
-	assert all(2 <= p["effective_cap"] < p["planned_cap"] for p in early)
+def test_plan_round_browsing_never_early_stops():
+	plans = [_plan_round_browsing(10) for _ in range(50)]
+	assert all(p["early_stop"] is False for p in plans)
+	assert all(p["effective_cap"] == p["planned_cap"] == 10 for p in plans)
+	assert all(p["fatigue"] is False for p in plans)
 
 
 def test_iter_pipeline_emits_progress_events(tmp_path: Path, monkeypatch):

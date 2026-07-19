@@ -468,6 +468,62 @@ def fetch_search_page_raw(
 	return raw
 
 
+def infer_search_has_more(zp_data: dict[str, Any], *, page_size: int = 15) -> bool:
+	"""解析 BOSS hasMore。
+
+	- 显式 hasMore=false/true：直接信任（末页也常满 15 条，绝不能因满页强行续翻）
+	- 字段缺失：仅在接近满页时保守当作还有下一页
+	"""
+	job_list = zp_data.get("jobList") or []
+	n = len(job_list) if isinstance(job_list, list) else 0
+	raw_flag = zp_data.get("hasMore")
+	size = int(page_size or 15)
+	full_page_hint = 15 if size >= 15 else max(8, size - 2)
+
+	if raw_flag is True or raw_flag == 1 or str(raw_flag).lower() == "true":
+		return True
+	if raw_flag is False or raw_flag == 0 or str(raw_flag).lower() == "false":
+		return False
+	# 字段缺失：有接近满页的结果则继续翻
+	return n >= full_page_hint
+
+
+def job_list_fingerprint(jobs: list[dict[str, Any]]) -> tuple[str, ...]:
+	"""用岗位 ID 指纹判断两页是否实质重复。"""
+	keys: list[str] = []
+	for job in jobs or []:
+		if not isinstance(job, dict):
+			continue
+		jid = str(
+			job.get("job_id")
+			or job.get("encryptJobId")
+			or job.get("security_id")
+			or job.get("securityId")
+			or ""
+		).strip()
+		if jid:
+			keys.append(jid)
+	return tuple(keys)
+
+
+def pages_substantially_overlap(
+	prev_jobs: list[dict[str, Any]],
+	curr_jobs: list[dict[str, Any]],
+	*,
+	min_ratio: float = 0.7,
+) -> bool:
+	"""当前页与上一页岗位高度重合 → 视为已到末页却仍在重复返回。"""
+	prev = set(job_list_fingerprint(prev_jobs))
+	curr = set(job_list_fingerprint(curr_jobs))
+	if not prev or not curr:
+		return False
+	overlap = len(prev & curr)
+	denom = min(len(prev), len(curr))
+	if denom <= 0:
+		return False
+	return (overlap / denom) >= min_ratio
+
+
 def process_search_page_result(
 	client: Any,
 	cache: Any,
@@ -482,16 +538,18 @@ def process_search_page_result(
 	"""处理单页列表结果（含 cache，须在打开 cache 的同一线程执行）。"""
 	stats = SearchPipelineStats()
 	matched: list[dict[str, Any]] = []
-	zp_data = raw.get("zpData", {})
+	zp_data = raw.get("zpData", {}) if isinstance(raw.get("zpData"), dict) else {}
 	job_list = zp_data.get("jobList", [])
+	if not isinstance(job_list, list):
+		job_list = []
 	stats.pages_scanned = 1
 	stats.jobs_seen = len(job_list)
-	has_more = bool(zp_data.get("hasMore", False))
+	has_more = infer_search_has_more(zp_data, page_size=15)
 
 	if not job_list:
 		return SearchPipelineResult(
 			items=matched,
-			has_more=has_more,
+			has_more=False,
 			total=0,
 			last_page=page,
 			stats=stats,

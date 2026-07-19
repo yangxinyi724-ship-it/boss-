@@ -13,7 +13,7 @@ from pet_boss.profile.models import AdaptiveScore, UserProfile
 from pet_boss.profile.prompts import ANALYSIS_SCORE_PROMPT, REFINE_REASON_RISK_PROMPT
 from pet_boss.profile.scout_learning import ai_memory_summary_for_prompt
 from pet_boss.profile.store import ProfileStore
-from pet_boss.rag.retriever import retrieve_analysis_rag_hits
+from pet_boss.rag.retriever import retrieve_analysis_rag_result
 from pet_boss.rag.service import format_rag_context_from_references
 from pet_boss.secretary.feedback import load_preference_instructions_text
 
@@ -386,7 +386,9 @@ def score_job_analysis_with_ai(
 	ai_mem = profile_payload.get("ai_learned_memory")
 	if ai_mem:
 		learning_hints = f"{learning_hints}\n\n{ai_mem}"
-	rag_refs = retrieve_analysis_rag_hits(store, svc, job, search_city=target_city or "")
+	rag_bundle = retrieve_analysis_rag_result(store, svc, job, search_city=target_city or "")
+	rag_refs = rag_bundle.get("references") or []
+	rag_meta = rag_bundle.get("meta") or {}
 	rag_ctx = format_rag_context_from_references(rag_refs)
 	if rag_ctx:
 		learning_hints = f"{learning_hints}\n\n{rag_ctx}"
@@ -425,6 +427,7 @@ def score_job_analysis_with_ai(
 		priority=data.get("priority") or "medium",
 		dimensions=dict(data.get("dimensions") or {}),
 		rag_references=rag_refs,
+		rag_meta=rag_meta,
 	)
 
 
@@ -490,6 +493,7 @@ def enrich_job_with_analysis_score(
 		"analysis_priority": adaptive.priority,
 		"analysis_dimensions": adaptive.dimensions,
 		"rag_references": adaptive.rag_references,
+		"rag_meta": adaptive.rag_meta,
 		"analysis_review_plan": adaptive.review_plan,
 		"profile_score": adaptive.score,
 		"profile_reason": adaptive.reason,

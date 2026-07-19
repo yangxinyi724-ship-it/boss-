@@ -29,8 +29,8 @@
   "scout": {
     "autoKeywords": true,
     "queryPassDepth": { "min": 1, "max": 6 },
-    "queryExhaustCooldownHours": 48,
-    "description": "根据秘书画像自动生成搜索词；每组关键词翻到末页后再切换下一组（不按通过岗数换词）；列表扫完的搜索词冷却 48 小时"
+    "queryExhaustCooldownHours": 4,
+    "description": "根据秘书画像自动生成搜索词；每组关键词翻到末页后再切换下一组（不按通过岗数换词）；列表扫完的搜索词冷却 4 小时"
   },
   "background": "office-room.png",
   "assetVersion": 3,

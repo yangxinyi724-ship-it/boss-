@@ -51,24 +51,55 @@ def test_offline_boss_not_filtered():
 	assert msg == ""
 
 
-def test_two_weeks_inactive_not_filtered():
+def test_two_months_within_active_filtered():
+	"""「2月内活跃」不是一周内，必须筛掉。"""
+	job = {"brandName": "成长科技", "bossTitle": "HR", "activeTimeDesc": "2月内活跃"}
+	inactive, msg = is_long_inactive_boss(job)
+	assert inactive is True
+	assert "一周" in msg
+	assert "2月内" in msg
+
+
+def test_boss_online_does_not_override_stale_desc():
+	"""列表常带 bossOnline=true，不能盖掉「2月内活跃」。"""
+	job = {
+		"brandName": "申灿科技",
+		"bossTitle": "HR",
+		"bossOnline": True,
+		"activeTimeDesc": "2月内活跃",
+		"boss_active": "2月内活跃",
+	}
+	inactive, msg = is_long_inactive_boss(job)
+	assert inactive is True
+	assert "2月内" in msg
+
+
+def test_two_weeks_inactive_filtered():
 	job = {"brandName": "成长科技", "bossTitle": "技术总监", "activeTimeDesc": "2周前活跃"}
-	inactive, _ = is_long_inactive_boss(job)
-	assert inactive is False
+	inactive, msg = is_long_inactive_boss(job)
+	assert inactive is True
+	assert "一周" in msg
 
 
 def test_three_weeks_inactive_filtered():
 	job = {"brandName": "成长科技", "bossTitle": "技术总监", "activeTimeDesc": "3周前活跃"}
 	inactive, msg = is_long_inactive_boss(job)
 	assert inactive is True
-	assert "半个月" in msg
+	assert "一周" in msg
+
+
+def test_two_months_inactive_filtered():
+	job = {"brandName": "成长科技", "bossTitle": "技术总监", "activeTimeDesc": "2个月不活跃"}
+	inactive, msg = is_long_inactive_boss(job)
+	assert inactive is True
+	assert "一周" in msg
 
 
 def test_half_year_inactive_filtered():
 	job = {"brandName": "成长科技", "bossTitle": "技术总监", "activeTimeDesc": "半年前活跃"}
 	inactive, msg = is_inactive_boss(job)
 	assert inactive is True
-	assert "半个月" in msg
+	assert "一周" in msg
 
 
 def test_online_boss_passes_activity():
@@ -78,8 +109,11 @@ def test_online_boss_passes_activity():
 
 
 def test_activity_status_days_threshold():
-	assert _boss_activity_status("10天前活跃") == "recent"
-	assert _boss_activity_status("15天前活跃") == "long_inactive"
+	assert _boss_activity_status("7天前活跃") == "recent"
+	assert _boss_activity_status("8天前活跃") == "stale"
+	assert _boss_activity_status("10天前活跃") == "stale"
+	assert _boss_activity_status("本周活跃") == "recent"
+	assert _boss_activity_status("近两周活跃") == "stale"
 	assert _boss_activity_status("离线") == "unknown"
 
 
@@ -106,7 +140,7 @@ def test_scout_hard_rejects_inactive_boss_without_filters():
 	}
 	hard = evaluate_hard_criteria(job, _profile(), scout_filters=ScoutFilterConfig())
 	assert hard.passed is False
-	assert any("半个月" in f or "不活跃" in f for f in hard.failures)
+	assert any("一周" in f or "不活跃" in f for f in hard.failures)
 
 
 def test_scout_hard_offline_passes_without_filters():
@@ -121,12 +155,12 @@ def test_scout_hard_offline_passes_without_filters():
 	assert hard.passed is True
 
 
-def test_scout_hard_relaxes_inactive_when_excellent_match():
+def test_scout_hard_never_relaxes_inactive_even_when_excellent_match():
 	job = {
 		"jobName": "Python 工程师",
 		"brandName": "成长科技",
 		"bossTitle": "技术总监",
-		"activeTimeDesc": "1个月前活跃",
+		"activeTimeDesc": "2个月前活跃",
 		"salaryDesc": "15-20K",
 		"jobDegree": "本科",
 		"jobExperience": "1-3年",
@@ -142,9 +176,10 @@ def test_scout_hard_relaxes_inactive_when_excellent_match():
 		_profile(),
 		scout_filters=filters,
 	)
-	assert hard.passed is True
-	assert any("酌情保留" in r for r in hard.reasons)
-	assert hard.checks.get("boss_active") is True
+	assert hard.passed is False
+	assert hard.checks.get("boss_active") is False
+	assert any("一周" in f or "不活跃" in f for f in hard.failures)
+	assert not any("酌情保留" in r for r in hard.reasons)
 
 
 def test_scout_hard_inactive_not_relaxed_when_salary_fails():

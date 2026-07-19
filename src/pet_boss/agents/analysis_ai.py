@@ -79,11 +79,29 @@ class AnalysisAI:
 		result = AnalysisResult(jobs_received=len(jobs))
 		for job in jobs:
 			if self._career_stage.enabled:
+				from pet_boss.rag.retriever import retrieve_analysis_rag_result
+				from pet_boss.rag.service import format_rag_context_from_references
+
+				rag_bundle = retrieve_analysis_rag_result(
+					store,
+					ai_service,
+					job,
+					search_city=(criteria.city if criteria else "") or "",
+				)
+				rag_refs = rag_bundle.get("references") or []
+				rag_meta = rag_bundle.get("meta") or {}
 				eval_result = evaluate_job_career_stage(
 					job, profile, self._career_stage,
-					store=store, ai_service=ai_service,
+					store=store,
+					ai_service=ai_service,
+					rag_context=format_rag_context_from_references(rag_refs),
 				)
-				enriched = {**job, **evaluation_to_job_fields(eval_result)}
+				enriched = {
+					**job,
+					**evaluation_to_job_fields(eval_result),
+					"rag_references": rag_refs,
+					"rag_meta": rag_meta,
+				}
 				enriched = apply_school_company_fit_to_enriched(
 					job, profile, enriched, ai_service=ai_service,
 				)

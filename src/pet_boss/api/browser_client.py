@@ -51,8 +51,36 @@ def _on_running_asyncio_loop() -> bool:
 		return False
 
 
+def _run_playwright_isolated(func: Callable[[], _T], *, timeout: float = 120.0) -> _T:
+	"""在全新线程执行 Playwright 同步 API，与 asyncio / 搜岗专用线程完全隔离。"""
+	import threading
+
+	box: dict[str, Any] = {}
+	done = threading.Event()
+
+	def _target() -> None:
+		try:
+			box["value"] = func()
+		except BaseException as exc:
+			box["error"] = exc
+		finally:
+			done.set()
+
+	thread = threading.Thread(
+		target=_target,
+		name="pet-boss-pw-isolated",
+		daemon=True,
+	)
+	thread.start()
+	if not done.wait(timeout=timeout):
+		raise TimeoutError("浏览器操作超时，请稍后重试")
+	if "error" in box:
+		raise box["error"]
+	return cast(_T, box["value"])
+
+
 def _run_browser_thread_safe(func: Callable[[], _T]) -> _T:
-	"""patchright 同步 API 不可在 asyncio 事件循环线程调用。"""
+	"""patchright 同步 API 不可在 asyncio 事件循环线程调用（搜岗会话用专用执行器）。"""
 	if _on_running_asyncio_loop():
 		from pet_boss.web.browser_executor import run_browser_blocking
 
@@ -101,34 +129,40 @@ def open_zhipin_job_page(
 		if logger is not None and hasattr(logger, "info"):
 			logger.info(msg)
 
-	if probe_cdp(cdp_url):
-		try:
-			if _open_job_page_via_cdp(url, cookies=cookies, cdp_url=cdp_url, user_agent=user_agent):
-				_log(f"[boss] 已在 Chrome 新标签页打开: {url}")
-				return {"mode": "cdp", "url": url, "message": "已在 Chrome 新标签页打开岗位详情"}
-		except Exception as exc:
-			_log(f"[boss] CDP 打开岗位页失败（{exc}），改用登录态浏览器")
+	def _open() -> dict[str, Any]:
+		if probe_cdp(cdp_url):
+			try:
+				if _open_job_page_via_cdp_unlocked(
+					url, cookies=cookies, cdp_url=cdp_url, user_agent=user_agent,
+				):
+					_log(f"[boss] 已在 Chrome 新标签页打开: {url}")
+					return {"mode": "cdp", "url": url, "message": "已在 Chrome 新标签页打开岗位详情"}
+			except Exception as exc:
+				_log(f"[boss] CDP 打开岗位页失败（{exc}），改用登录态浏览器")
 
-	pw = _run_browser_thread_safe(lambda: sync_playwright().start())
-	browser = pw.chromium.launch(headless=False)
-	context = browser.new_context(
-		user_agent=user_agent or None,
-		viewport={"width": 1280, "height": 800},
-		locale="zh-CN",
-		timezone_id="Asia/Shanghai",
-	)
-	context.add_cookies([
-		{"name": name, "value": str(value), "domain": ".zhipin.com", "path": "/"}
-		for name, value in cookies.items()
-	])
-	page = context.new_page()
-	try:
-		page.goto(url, wait_until="domcontentloaded", timeout=_NAV_OPEN_TIMEOUT_MS)
-	except Exception as exc:
-		_log(f"[boss] 打开岗位页导航: {exc}")
-	_DETACHED_VIEWERS.append((pw, browser))
-	_log(f"[boss] 已用登录态浏览器打开: {url}")
-	return {"mode": "browser", "url": url, "message": "已用登录态打开岗位详情"}
+		pw = sync_playwright().start()
+		browser = pw.chromium.launch(headless=False)
+		context = browser.new_context(
+			user_agent=user_agent or None,
+			viewport={"width": 1280, "height": 800},
+			locale="zh-CN",
+			timezone_id="Asia/Shanghai",
+		)
+		context.add_cookies([
+			{"name": name, "value": str(value), "domain": ".zhipin.com", "path": "/"}
+			for name, value in cookies.items()
+		])
+		page = context.new_page()
+		try:
+			page.goto(url, wait_until="domcontentloaded", timeout=_NAV_OPEN_TIMEOUT_MS)
+		except Exception as exc:
+			_log(f"[boss] 打开岗位页导航: {exc}")
+		_DETACHED_VIEWERS.append((pw, browser))
+		_log(f"[boss] 已用登录态浏览器打开: {url}")
+		return {"mode": "browser", "url": url, "message": "已用登录态打开岗位详情"}
+
+	# 打开岗位与搜岗浏览器会话隔离：始终在独立线程执行，避免 Sync API / 抢执行器
+	return _run_playwright_isolated(_open)
 
 
 def _open_job_page_via_cdp(
@@ -139,11 +173,26 @@ def _open_job_page_via_cdp(
 	user_agent: str,
 ) -> bool:
 	"""在 CDP Chrome 新标签页打开 URL，必要时注入 session cookies。"""
+	return _run_playwright_isolated(
+		lambda: _open_job_page_via_cdp_unlocked(
+			url, cookies=cookies, cdp_url=cdp_url, user_agent=user_agent,
+		)
+	)
+
+
+def _open_job_page_via_cdp_unlocked(
+	url: str,
+	*,
+	cookies: dict[str, Any],
+	cdp_url: str | None,
+	user_agent: str,
+) -> bool:
+	"""CDP 打开岗位页（调用方须已在浏览器专用线程）。"""
 	base = cdp_url or CDP_DEFAULT_URL
 	ws_url = probe_cdp(cdp_url)
 	if not ws_url:
 		return False
-	pw = _run_browser_thread_safe(lambda: sync_playwright().start())
+	pw = sync_playwright().start()
 	browser = pw.chromium.connect_over_cdp(base)
 	context = browser.contexts[0] if browser.contexts else browser.new_context()
 	existing = {

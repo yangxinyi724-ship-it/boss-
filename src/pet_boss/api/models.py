@@ -41,7 +41,9 @@ class JobItem:
 			stage=raw.get("brandStageName", ""),
 			boss_name=raw.get("bossName", ""),
 			boss_title=raw.get("bossTitle", ""),
-			boss_active=raw.get("activeTimeDesc") or ("在线" if raw.get("bossOnline") else "离线"),
+			boss_active=raw.get("activeTimeDesc")
+			or raw.get("activeDesc")
+			or ("在线" if raw.get("bossOnline") else "离线"),
 			security_id=raw.get("securityId", ""),
 		)
 

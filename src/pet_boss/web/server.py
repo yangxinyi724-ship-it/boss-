@@ -10,6 +10,7 @@ import threading
 import uuid
 from collections import deque
 from collections.abc import Callable, Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any, TypeVar
@@ -77,6 +78,8 @@ _SCOUT_SSE_FANOUT_TYPES = frozenset({
 	"page_hidden_continue",
 	"page_visible_resume",
 	"boss_browser_closed",
+	# 轮次休息心跳：可推，积压时可丢（否则 UI 无法维持休息态）
+	"scout_heartbeat",
 }) | _SCOUT_SSE_BROWSE_TYPES
 # 队列紧张时可丢：页码/浏览碎事件；岗位通过不可丢
 _SCOUT_SSE_SOFT_TYPES = frozenset({
@@ -179,6 +182,8 @@ _scout_live: dict[str, Any] = {
 	"desync_since": 0.0,
 	"page_hidden": False,
 	"pause_until": 0.0,
+	"pause_type": "",
+	"pause_message": "",
 	"pause_event": None,
 	"stop_event": None,
 	"subscribers": [],  # list[{"queue", "loop"}]
@@ -206,6 +211,8 @@ def _start_scout_live(*, run_id: str = "") -> None:
 		_scout_live["desync_since"] = 0.0
 		_scout_live["page_hidden"] = False
 		_scout_live["pause_until"] = 0.0
+		_scout_live["pause_type"] = ""
+		_scout_live["pause_message"] = ""
 		_scout_live["last_warn"] = ""
 		_scout_live["last_error"] = ""
 		_scout_live["last_message"] = ""
@@ -333,7 +340,7 @@ def _scout_sse_item_droppable(item: tuple[str, Any]) -> bool:
 
 
 def _scout_should_fanout(item: tuple[str, Any]) -> bool:
-	"""决定是否推入 Web SSE：岗位浏览信息会推；心跳等仍不推。"""
+	"""决定是否推入 Web SSE：岗位浏览与休息心跳会推；其它碎事件不推。"""
 	kind, payload = item
 	if kind != "event":
 		return True
@@ -473,9 +480,13 @@ def _touch_scout_ack(body: dict[str, Any] | None = None) -> None:
 
 def _scout_live_snapshot() -> dict[str, Any]:
 	with _scout_live_lock:
+		now = time.time()
 		ack_at = float(_scout_live.get("ack_at") or 0.0)
-		ack_age = max(0.0, time.time() - ack_at) if _scout_live.get("active") else 0.0
+		ack_age = max(0.0, now - ack_at) if _scout_live.get("active") else 0.0
 		progress_at = float(_scout_live.get("last_progress_at") or 0.0)
+		pause_until = float(_scout_live.get("pause_until") or 0.0)
+		pause_remaining = max(0.0, pause_until - now) if pause_until > 0 else 0.0
+		in_planned_pause = pause_remaining > 0.05
 		stats = _scout_live.get("stats")
 		passed = list(_scout_live.get("passed_jobs") or [])
 		return {
@@ -490,12 +501,16 @@ def _scout_live_snapshot() -> dict[str, Any]:
 			"ack_age_sec": ack_age,
 			"ui_online": bool(_scout_live.get("active")) and ack_age < _SCOUT_UI_ACK_ONLINE_SEC,
 			"ui_stale": bool(_scout_live.get("ui_stale")),
-			"progress_age_sec": max(0.0, time.time() - progress_at) if progress_at else 0.0,
+			"progress_age_sec": max(0.0, now - progress_at) if progress_at else 0.0,
 			"subscriber_count": len(_scout_live.get("subscribers") or []),
 			"last_warn": str(_scout_live.get("last_warn") or ""),
 			"last_error": str(_scout_live.get("last_error") or ""),
 			"last_message": str(_scout_live.get("last_message") or ""),
 			"paused_for_hidden": False,
+			"in_planned_pause": in_planned_pause,
+			"pause_remaining_sec": round(pause_remaining, 1) if in_planned_pause else 0.0,
+			"pause_type": str(_scout_live.get("pause_type") or "") if in_planned_pause else "",
+			"pause_message": str(_scout_live.get("pause_message") or "") if in_planned_pause else "",
 			"stats": stats if isinstance(stats, dict) else None,
 			"passed_jobs": passed,
 			"passed_count": len(passed),
@@ -510,6 +525,8 @@ def _extend_scout_pause_until(event: dict[str, Any] | None) -> None:
 	if etype == "round_resume" or etype == "work_hours_resume":
 		with _scout_live_lock:
 			_scout_live["pause_until"] = 0.0
+			_scout_live["pause_type"] = ""
+			_scout_live["pause_message"] = ""
 		return
 	if etype not in _SCOUT_PAUSE_EVENT_TYPES:
 		return
@@ -526,10 +543,15 @@ def _extend_scout_pause_until(event: dict[str, Any] | None) -> None:
 	if sec <= 0:
 		return
 	until = time.time() + sec + _SCOUT_PAUSE_ACK_GRACE_SEC
+	msg = event.get("message")
+	msg_s = msg.strip() if isinstance(msg, str) else ""
 	with _scout_live_lock:
 		prev = float(_scout_live.get("pause_until") or 0.0)
 		if until > prev:
 			_scout_live["pause_until"] = until
+		_scout_live["pause_type"] = etype
+		if msg_s:
+			_scout_live["pause_message"] = msg_s
 
 
 def _scout_ack_stale_limit_sec() -> float:
@@ -685,7 +707,12 @@ def _err(exc: ProfileWebError) -> dict[str, Any]:
 
 
 def _web_ai_service(data_dir: Path):
-	from pet_boss.ai.config import AIConfigStore, resolve_embedding_model, rag_enabled as config_rag_enabled
+	from pet_boss.ai.config import (
+		AIConfigStore,
+		resolve_embedding_base_url,
+		resolve_embedding_model,
+		rag_enabled as config_rag_enabled,
+	)
 	from pet_boss.ai.service import AIService
 	from pet_boss.ai.token_usage import get_token_usage_store
 
@@ -705,6 +732,8 @@ def _web_ai_service(data_dir: Path):
 		max_tokens=config.get("ai_max_tokens", 4096),
 		usage_store=get_token_usage_store(data_dir),
 		embedding_model=resolve_embedding_model(config),
+		embedding_base_url=resolve_embedding_base_url(config),
+		embedding_api_key=store.get_embedding_api_key(),
 		rag_enabled=config_rag_enabled(config),
 	)
 
@@ -889,12 +918,13 @@ async def _run_blocking(func: Callable[..., _T], /, *args: Any, **kwargs: Any) -
 
 async def _run_browser_blocking(func: Callable[..., _T], /, *args: Any, **kwargs: Any) -> _T:
 	"""在 patchright 专用单线程中执行，避免 greenlet 跨线程错误。"""
-	from pet_boss.web.browser_executor import _BROWSER_EXECUTOR
+	from pet_boss.web.browser_executor import submit_browser_task
 
-	loop = asyncio.get_running_loop()
 	if kwargs:
-		return await loop.run_in_executor(_BROWSER_EXECUTOR, lambda: func(*args, **kwargs))
-	return await loop.run_in_executor(_BROWSER_EXECUTOR, func, *args)
+		future = submit_browser_task(lambda: func(*args, **kwargs))
+	else:
+		future = submit_browser_task(func, *args)
+	return await asyncio.wrap_future(future)
 
 
 def _stream_scout_events(
@@ -1334,6 +1364,16 @@ def create_app(data_dir: Path):
 			pass
 		return _json_response(_ok(boss_svc.list_filtered_analysis(limit=limit)))
 
+	async def api_boss_analysis_passed(request: Request):
+		limit = 200
+		try:
+			raw = request.query_params.get("limit")
+			if raw:
+				limit = int(raw)
+		except (TypeError, ValueError):
+			pass
+		return _json_response(_ok(boss_svc.list_passed_analysis(limit=limit)))
+
 	async def api_boss_shortlist_remove(request: Request):
 		try:
 			body = await request.json()
@@ -1362,6 +1402,7 @@ def create_app(data_dir: Path):
 				analysis_score=int(body["analysis_score"]) if body.get("analysis_score") is not None else None,
 				analysis_reason=[str(x) for x in raw_reason] if isinstance(raw_reason, list) else None,
 				analysis_risk=[str(x) for x in raw_risk] if isinstance(raw_risk, list) else None,
+				remove_from_passed=bool(body.get("remove_from_passed")),
 			)
 			return _json_response(_ok(data))
 		except ProfileWebError as exc:
@@ -1384,7 +1425,8 @@ def create_app(data_dir: Path):
 	async def api_boss_open_job(request: Request):
 		try:
 			body = await request.json()
-			data = await _run_browser_blocking(
+			# 打开岗位自带隔离 Playwright 线程，走普通线程池即可，勿与搜岗抢浏览器执行器
+			data = await _run_blocking(
 				boss_svc.open_job,
 				job_id=str(body.get("job_id", "")),
 				security_id=str(body.get("security_id", "")),
@@ -1594,6 +1636,7 @@ def create_app(data_dir: Path):
 		Route("/api/boss/scout/stream", api_boss_scout_stream, methods=["POST"]),
 		Route("/api/boss/shortlist", api_boss_shortlist, methods=["GET", "POST"]),
 		Route("/api/boss/analysis/filtered", api_boss_analysis_filtered, methods=["GET"]),
+		Route("/api/boss/analysis/passed", api_boss_analysis_passed, methods=["GET"]),
 		Route("/api/boss/shortlist/remove", api_boss_shortlist_remove, methods=["POST"]),
 		Route("/api/boss/reject", api_boss_reject, methods=["POST"]),
 		Route("/api/boss/open-job", api_boss_open_job, methods=["POST"]),
@@ -1612,7 +1655,19 @@ def create_app(data_dir: Path):
 		Route("/api/monitor/token-pricing", api_monitor_token_pricing_save, methods=["POST"]),
 		Mount("/static", StaticFiles(directory=STATIC_DIR), name="static"),
 	]
-	return Starlette(routes=routes, exception_handlers={Exception: on_exception})
+
+	@asynccontextmanager
+	async def lifespan(_app):
+		yield
+		# Ctrl+C / 进程退出时主动停搜岗，否则 uvicorn 会一直等 SSE/后台任务，
+		# 而浏览器线程仍会继续翻页（日志里还能看到「正在搜索第 N 页」）。
+		if _request_stop_scout("Web 服务关闭，停止搜岗", code="SERVER_SHUTDOWN"):
+			await asyncio.sleep(0.3)
+		from pet_boss.web.browser_executor import shutdown_browser_executor
+
+		shutdown_browser_executor()
+
+	return Starlette(routes=routes, exception_handlers={Exception: on_exception}, lifespan=lifespan)
 
 
 def run_server(*, data_dir: Path, host: str = "127.0.0.1", port: int = 8787) -> None:

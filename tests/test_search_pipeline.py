@@ -115,6 +115,8 @@ def test_pipeline_passes_raw_params_to_search_client():
 		"query": "python",
 		"filters": {
 			"city": None,
+			"city_code": None,
+			"district_code": None,
 			"salary": None,
 			"experience": None,
 			"education": None,

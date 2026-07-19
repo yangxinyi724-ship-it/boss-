@@ -45,7 +45,11 @@ _POPULAR_CITIES = [
 
 
 def _ai_service(data_dir: Path) -> AIService | None:
-	from pet_boss.ai.config import resolve_embedding_model, rag_enabled as config_rag_enabled
+	from pet_boss.ai.config import (
+		resolve_embedding_base_url,
+		resolve_embedding_model,
+		rag_enabled as config_rag_enabled,
+	)
 	from pet_boss.ai.token_usage import get_token_usage_store
 
 	store = AIConfigStore(data_dir)
@@ -64,6 +68,8 @@ def _ai_service(data_dir: Path) -> AIService | None:
 		max_tokens=config.get("ai_max_tokens", 4096),
 		usage_store=get_token_usage_store(data_dir),
 		embedding_model=resolve_embedding_model(config),
+		embedding_base_url=resolve_embedding_base_url(config),
+		embedding_api_key=store.get_embedding_api_key(),
 		rag_enabled=config_rag_enabled(config),
 	)
 
@@ -299,6 +305,9 @@ class BossWebService:
 						city_code=resolved_city_code,
 						district_code=resolved_district_code or None,
 					)
+					# 用户手动输入关键词开搜：清掉该词冷却，避免误判「扫完」后锁 48 小时
+					if str(query or "").strip():
+						cache.clear_scout_query_exhausted_one(str(query).strip(), resolved_city)
 					depth_min, depth_max = load_scout_query_pass_depth()
 					cooldown_hours = load_scout_query_exhaust_cooldown_hours()
 					with platform_cls(client) as platform:
@@ -441,11 +450,18 @@ class BossWebService:
 
 	def list_filtered_analysis(self, *, limit: int = 200) -> dict[str, Any]:
 		"""分析 AI 筛掉的岗位（资料柜）。"""
+		from pet_boss.rag.service import rag_miss_message_for_display
+		from pet_boss.rag.vector_store import VectorStore
+
+		with ProfileStore(self._data_dir) as pstore:
+			vector_count = VectorStore(pstore._conn).count()
 		with CacheStore(self._data_dir / "cache" / "boss_agent.db") as cache:
 			rows = cache.list_recent_analysis_records(status="filtered", limit=limit)
 		items = []
 		for row in rows:
 			job = row.get("job") if isinstance(row.get("job"), dict) else {}
+			refs = list(job.get("rag_references") or [])[:8]
+			rag_meta = job.get("rag_meta") if isinstance(job.get("rag_meta"), dict) else {}
 			items.append({
 				"id": row.get("id"),
 				"security_id": row.get("security_id") or job.get("security_id") or "",
@@ -457,13 +473,67 @@ class BossWebService:
 				"analysis_score": row.get("analysis_score") or job.get("analysis_score") or 0,
 				"filter_reason": resolve_analysis_filter_reason(job),
 				"analysis_risk": list(job.get("analysis_risk") or job.get("profile_risk") or [])[:4],
-				"rag_references": list(job.get("rag_references") or [])[:8],
+				"rag_references": refs,
+				"rag_meta": rag_meta,
+				"rag_miss_message": rag_miss_message_for_display(
+					references=refs,
+					rag_meta=rag_meta,
+					current_vector_count=vector_count,
+				),
 				"analysis_review_plan": job.get("analysis_review_plan") or None,
 				"school_company_fit": job.get("school_company_fit") or {},
 				"analyzed_at": row.get("analyzed_at"),
 				"job": job,
 			})
-		return {"items": items, "total": len(items)}
+		return {"items": items, "total": len(items), "rag_vector_count": vector_count}
+
+	def list_passed_analysis(self, *, limit: int = 200) -> dict[str, Any]:
+		"""分析 AI 历史通过岗位（资料柜）。"""
+		from pet_boss.rag.service import rag_miss_message_for_display
+		from pet_boss.rag.vector_store import VectorStore
+
+		with ProfileStore(self._data_dir) as pstore:
+			vector_count = VectorStore(pstore._conn).count()
+		with CacheStore(self._data_dir / "cache" / "boss_agent.db") as cache:
+			rows = cache.list_recent_analysis_records(status="passed", limit=limit)
+		items = []
+		for row in rows:
+			job = row.get("job") if isinstance(row.get("job"), dict) else {}
+			reasons = list(
+				job.get("analysis_reason")
+				or job.get("profile_reason")
+				or job.get("match_reasons")
+				or []
+			)[:6]
+			refs = list(job.get("rag_references") or [])[:8]
+			rag_meta = job.get("rag_meta") if isinstance(job.get("rag_meta"), dict) else {}
+			items.append({
+				"id": row.get("id"),
+				"security_id": row.get("security_id") or job.get("security_id") or "",
+				"job_id": row.get("job_id") or job.get("job_id") or "",
+				"title": row.get("title") or job.get("title") or "",
+				"company": row.get("company") or job.get("company") or "",
+				"city": row.get("city") or job.get("city") or "",
+				"salary": row.get("salary") or job.get("salary") or "",
+				"experience": job.get("experience") or "",
+				"analysis_score": row.get("analysis_score") or job.get("analysis_score") or 0,
+				"analysis_reason": reasons,
+				"analysis_risk": list(job.get("analysis_risk") or job.get("profile_risk") or [])[:4],
+				"rag_references": refs,
+				"rag_meta": rag_meta,
+				"rag_miss_message": rag_miss_message_for_display(
+					references=refs,
+					rag_meta=rag_meta,
+					current_vector_count=vector_count,
+				),
+				"analysis_review_plan": job.get("analysis_review_plan") or None,
+				"school_company_fit": job.get("school_company_fit") or {},
+				"search_query": row.get("search_query") or "",
+				"search_city": row.get("search_city") or "",
+				"analyzed_at": row.get("analyzed_at"),
+				"job": job,
+			})
+		return {"items": items, "total": len(items), "rag_vector_count": vector_count}
 
 	def remove_shortlist_item(
 		self,
@@ -493,8 +563,14 @@ class BossWebService:
 		analysis_score: int | None = None,
 		analysis_reason: list[str] | None = None,
 		analysis_risk: list[str] | None = None,
+		remove_from_passed: bool = False,
 	) -> dict[str, Any]:
 		import time
+
+		security_id = str(security_id or "").strip()
+		job_id = str(job_id or "").strip()
+		if not security_id or not job_id:
+			raise ProfileWebError("INVALID_PARAM", "缺少 security_id 或 job_id")
 
 		job = {
 			"security_id": security_id,
@@ -513,8 +589,13 @@ class BossWebService:
 		import json as _json
 		notes = _json.dumps(notes_payload, ensure_ascii=False) if notes_payload["tags"] or notes_payload["reason"] else ""
 
+		removed_passed = 0
 		with CacheStore(self._data_dir / "cache" / "boss_agent.db") as cache:
 			record_scout_outcome(cache, job, "rejected")
+			if remove_from_passed:
+				removed_passed = cache.remove_analysis_records(
+					security_id, job_id, status="passed",
+				)
 
 		learning_summary: dict[str, Any] = {}
 		log_id = 0
@@ -567,9 +648,17 @@ class BossWebService:
 					},
 					log_id=log_id,
 				)
+			if remove_from_passed:
+				from pet_boss.rag.documents import analysis_doc_key
+				from pet_boss.rag.vector_store import VectorStore
+
+				VectorStore(store._conn).delete_by_doc_keys({
+					analysis_doc_key(security_id, job_id),
+				})
 
 		return {
 			"rejected": True,
+			"removed_from_passed": removed_passed,
 			"learning_log_id": log_id,
 			"learning_weights": learning_summary.get("learning_weights") or {},
 			"weight_changes": learning_summary.get("weight_changes") or [],
@@ -597,23 +686,22 @@ class BossWebService:
 		if not job_id:
 			raise ProfileWebError("INVALID_PARAM", "缺少 job_id")
 		auth = AuthManager(self._data_dir, logger=self._logger, platform="zhipin")
-		token, verified = auth.resolve_session(try_browser=True)
+		# 打开岗位只需本地 cookie；不要 try_browser，避免与搜岗争用 Playwright
+		token, verified = auth.resolve_session(try_browser=False)
 		if not verified:
-			raise ProfileWebError(
-				"AUTH_REQUIRED",
-				"BOSS 登录态无效或已过期，请点击「从浏览器同步」或「登录 BOSS 直聘」",
-				status=401,
-			)
+			# cookie 在线校验失败时仍允许带着本地 wt2 打开（浏览器里可再登录）
+			token = auth.check_status()
 		cookies = token.get("cookies", {}) if isinstance(token, dict) else {}
 		if not isinstance(cookies, dict) or not cookies.get("wt2"):
 			raise ProfileWebError(
 				"AUTH_REQUIRED",
-				"BOSS 登录态无效，请重新登录",
+				"BOSS 登录态无效，请重新登录或「从浏览器同步」",
 				status=401,
 			)
 		from pet_boss.api.browser_client import build_job_detail_page_url, open_zhipin_job_page
 
 		url = build_job_detail_page_url(job_id, security_id)
+		# open_zhipin_job_page 内部已在隔离线程跑 Playwright，勿再进搜岗专用执行器
 		return open_zhipin_job_page(
 			url,
 			cookies=cookies,

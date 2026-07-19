@@ -30,6 +30,8 @@ class AIService:
 		max_tokens: int = 4096,
 		*,
 		embedding_model: str = "text-embedding-3-small",
+		embedding_base_url: str | None = None,
+		embedding_api_key: str | None = None,
 		rag_enabled: bool = True,
 		usage_store: TokenUsageStore | None = None,
 	):
@@ -38,6 +40,10 @@ class AIService:
 		self.api_key = api_key
 		self.model = model
 		self.embedding_model = embedding_model
+		self.embedding_base_url = (
+			embedding_base_url.rstrip("/") if embedding_base_url else None
+		)
+		self.embedding_api_key = embedding_api_key or None
 		self.rag_enabled = rag_enabled
 		self.temperature = temperature
 		self.max_tokens = max_tokens

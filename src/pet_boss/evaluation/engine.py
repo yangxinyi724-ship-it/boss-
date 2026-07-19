@@ -35,9 +35,11 @@ class EvaluationEngine:
 		stage: CareerStage = "junior",
 		*,
 		ai_service: AIService | None = None,
+		rag_context: str = "",
 	) -> None:
 		self.stage = stage
 		self._ai_service = ai_service
+		self._rag_context = rag_context or ""
 
 	def evaluate(
 		self,
@@ -152,6 +154,7 @@ class EvaluationEngine:
 				candidate,
 				self.stage,
 				list(heuristic.keys()),
+				rag_context=self._rag_context,
 			)
 		except Exception:
 			return heuristic
@@ -179,9 +182,14 @@ def evaluate_job_career_stage(
 	*,
 	store: ProfileStore | None = None,
 	ai_service: AIService | None = None,
+	rag_context: str = "",
 ) -> EvaluationResult:
 	candidate = build_candidate_profile(profile, store=store)
-	engine = EvaluationEngine(settings.stage, ai_service=ai_service)
+	engine = EvaluationEngine(
+		settings.stage,
+		ai_service=ai_service,
+		rag_context=rag_context,
+	)
 	return engine.evaluate(job, candidate)
 
 

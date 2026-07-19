@@ -547,6 +547,31 @@ class CacheStore:
 		)
 		self._conn.commit()
 
+	def remove_analysis_records(
+		self,
+		security_id: str,
+		job_id: str,
+		*,
+		status: str | None = "passed",
+	) -> int:
+		"""删除分析记录；默认只删 status=passed，供资料柜「不感兴趣」移除。"""
+		security_id = str(security_id or "").strip()
+		job_id = str(job_id or "").strip()
+		if not security_id or not job_id:
+			return 0
+		if status:
+			cur = self._conn.execute(
+				"DELETE FROM analysis_records WHERE security_id = ? AND job_id = ? AND status = ?",
+				(security_id, job_id, status),
+			)
+		else:
+			cur = self._conn.execute(
+				"DELETE FROM analysis_records WHERE security_id = ? AND job_id = ?",
+				(security_id, job_id),
+			)
+		self._conn.commit()
+		return int(cur.rowcount or 0)
+
 	def list_analysis_records(
 		self,
 		since_ts: float,
@@ -919,6 +944,18 @@ class CacheStore:
 		self._conn.execute("DELETE FROM scout_query_exhausted")
 		self._conn.commit()
 		return removed
+
+	def clear_scout_query_exhausted_one(self, query: str, city: str | None) -> bool:
+		"""清除单个搜索词的扫完冷却（用户手动开搜时用）。"""
+		from pet_boss.agents.scout_query_memory import query_scope_key
+
+		key = query_scope_key(query, city)
+		cur = self._conn.execute(
+			"DELETE FROM scout_query_exhausted WHERE scope_key = ?",
+			(key,),
+		)
+		self._conn.commit()
+		return (cur.rowcount or 0) > 0
 
 	def clear_all_scout_history(self) -> dict[str, int]:
 		"""全部重置搜岗状态：侦察历史、传输记录、分析记录、候选池一并清空。"""

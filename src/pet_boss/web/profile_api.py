@@ -40,7 +40,11 @@ class ProfileWebService:
 		self._resume_store = ResumeStore(data_dir / "resumes")
 
 	def _ai_service(self) -> AIService | None:
-		from pet_boss.ai.config import resolve_embedding_model, rag_enabled as config_rag_enabled
+		from pet_boss.ai.config import (
+			resolve_embedding_base_url,
+			resolve_embedding_model,
+			rag_enabled as config_rag_enabled,
+		)
 
 		store = AIConfigStore(self._data_dir)
 		if not store.is_configured():
@@ -58,6 +62,8 @@ class ProfileWebService:
 			max_tokens=config.get("ai_max_tokens", 4096),
 			usage_store=get_token_usage_store(self._data_dir),
 			embedding_model=resolve_embedding_model(config),
+			embedding_base_url=resolve_embedding_base_url(config),
+			embedding_api_key=store.get_embedding_api_key(),
 			rag_enabled=config_rag_enabled(config),
 		)
 

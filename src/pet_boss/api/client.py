@@ -1,5 +1,6 @@
 import atexit
 import random
+import re
 import time
 import weakref
 from collections.abc import Callable
@@ -9,8 +10,6 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 import httpx
 
 _T = TypeVar("_T")
-
-import httpx
 
 from pet_boss.api import endpoints
 from pet_boss.api.http_trace import is_http_trace_enabled, log_incoming_response, log_outgoing_request
@@ -353,8 +352,81 @@ class BossClient:
 	# High-risk: search, recommend, greet, job_card → browser channel
 	# Low-risk: status, me, cities, schema, detail → httpx channel
 
+	def _resolve_encrypt_expect_id(self, query: str = "") -> str:
+		"""读取简历期望职位 ID，尽量贴近网页搜岗（顶栏常绑当前期望）。"""
+		try:
+			raw = self.resume_expect()
+		except Exception:
+			return ""
+		if not isinstance(raw, dict):
+			return ""
+		zp = raw.get("zpData")
+		expects: list[Any] = []
+		if isinstance(zp, dict):
+			for key in ("expectList", "expects", "list", "encryptExpectList"):
+				val = zp.get(key)
+				if isinstance(val, list):
+					expects = val
+					break
+		elif isinstance(zp, list):
+			expects = zp
+		if not expects:
+			return ""
+
+		q = str(query or "").strip().lower()
+
+		def _eid(item: dict[str, Any]) -> str:
+			for k in ("encryptExpectId", "encryptId", "expectId", "id"):
+				v = item.get(k)
+				if v is not None and str(v).strip():
+					return str(v).strip()
+			return ""
+
+		def _ename(item: dict[str, Any]) -> str:
+			for k in ("positionName", "expectName", "jobName", "name", "position"):
+				v = item.get(k)
+				if isinstance(v, str) and v.strip():
+					return v.strip().lower()
+			return ""
+
+		if q:
+			tokens = re.findall(r"[a-z0-9]{2,}|[\u4e00-\u9fff]{2,}", q)
+			for item in expects:
+				if not isinstance(item, dict):
+					continue
+				name, eid = _ename(item), _eid(item)
+				if not eid:
+					continue
+				if name and (name in q or q in name or any(t and t in name for t in tokens)):
+					return eid
+		for item in expects:
+			if isinstance(item, dict):
+				eid = _eid(item)
+				if eid:
+					return eid
+		return ""
+
 	def search_jobs(self, query: str, **filters: Any) -> dict[str, Any]:
-		params: dict[str, Any] = {"query": query, "page": filters.get("page", 1)}
+		# 与网页 /web/geek/job 对齐：pageSize=15、空筛选字段、尽量带 encryptExpectId
+		params: dict[str, Any] = {
+			"query": query,
+			"page": filters.get("page", 1),
+			"scene": filters.get("scene", 1),
+			"pageSize": filters.get("page_size", filters.get("pageSize", 15)),
+			"expectInfo": filters.get("expectInfo", ""),
+			"encryptExpectId": filters.get("encryptExpectId", filters.get("encrypt_expect_id", "")),
+			"mixExpectType": filters.get("mixExpectType", ""),
+			"multiSubway": filters.get("multiSubway", ""),
+			"multiBusinessDistrict": filters.get("multiBusinessDistrict", ""),
+			"position": filters.get("position", ""),
+			"jobType": "",
+			"salary": "",
+			"experience": "",
+			"degree": "",
+			"industry": "",
+			"scale": "",
+			"stage": "",
+		}
 		if raw_params := filters.get("raw_params"):
 			params.update(raw_params)
 		city_code = filters.get("city_code")
@@ -397,6 +469,10 @@ class BossClient:
 			code = filters.get("job_type_code") or endpoints.JOB_TYPE_CODES.get(job_type)
 			if code:
 				params["jobType"] = code
+		if not str(params.get("encryptExpectId") or "").strip():
+			eid = self._resolve_encrypt_expect_id(str(query or ""))
+			if eid:
+				params["encryptExpectId"] = eid
 		self._maybe_refresh_stoken_before_search()
 		result = self._browser_request("GET", endpoints.SEARCH_URL, params=params)
 		if result.get("code") == 0:

@@ -67,7 +67,7 @@ def test_plan_scout_round_strategy_llm():
 			"effective_cap": 2,
 			"early_stop": True,
 			"pass_target": 3,
-			"strategy_summary": "保守浏览两页",
+			"strategy_summary": "试图提前结束也应被忽略",
 			"focus_notes": ["优先看标题匹配度"],
 		}, ensure_ascii=False),
 	)
@@ -79,9 +79,10 @@ def test_plan_scout_round_strategy_llm():
 		base_plan=base,
 	)
 	assert plan["planner"] == "llm"
-	assert plan["planned_cap"] == 4
-	assert plan["effective_cap"] == 2
-	assert plan["early_stop"] is True
+	# LLM 不得改写/提前结束本轮页数上限
+	assert plan["planned_cap"] == 3
+	assert plan["effective_cap"] == 3
+	assert plan["early_stop"] is False
 	assert plan["pass_target"] == 3
 	assert plan["fatigue"] is False
 
@@ -120,8 +121,8 @@ def test_maybe_review_borderline_score_pass(monkeypatch):
 		}, ensure_ascii=False),
 	)
 	monkeypatch.setattr(
-		"pet_boss.agents.planners.analysis_review.retrieve_analysis_rag_hits",
-		lambda *a, **k: [],
+		"pet_boss.agents.planners.analysis_review.retrieve_analysis_rag_result",
+		lambda *a, **k: {"references": [], "meta": {"code": "ok", "message": ""}},
 	)
 	profile = UserProfile()
 	result = AdaptiveScore(score=58, reason=["初始偏低"], risk=[], priority=1, dimensions={})

@@ -206,7 +206,6 @@ def evaluate_hard_criteria(
 				checks=checks,
 				reasons=reasons or ["非猎头代招，院校层级已匹配"],
 			),
-			evaluated_filter_count=0,
 		)
 
 	blob = _job_text_blob(job).lower()
@@ -352,7 +351,6 @@ def evaluate_hard_criteria(
 				checks=checks,
 				reasons=reasons or ["已启用条件但缺少具体筛选参数，院校层级已匹配"],
 			),
-			evaluated_filter_count=0,
 		)
 
 	passed = all(checks.get(k, True) for k in evaluated)
@@ -365,17 +363,14 @@ def evaluate_hard_criteria(
 			failures=failures,
 			skipped=skipped,
 		),
-		evaluated_filter_count=len(evaluated),
 	)
 
 
 def _apply_boss_activity_gate(
 	job: dict[str, Any],
 	result: ScoutHardResult,
-	*,
-	evaluated_filter_count: int,
 ) -> ScoutHardResult:
-	"""半个月以上未活跃 HR 需筛；岗位硬性条件高度匹配时可酌情保留。"""
+	"""超过一周未活跃的 HR 一律筛掉，不因硬性匹配豁免。"""
 	inactive, inactive_msg = is_long_inactive_boss(job)
 	if not inactive:
 		active = _active_desc(job)
@@ -385,15 +380,6 @@ def _apply_boss_activity_gate(
 		return result
 
 	result.checks["boss_active"] = False
-	excellent_match = result.passed and evaluated_filter_count >= 1
-	if excellent_match:
-		active = _active_desc(job)
-		result.reasons.append(
-			f"招聘者较久未活跃（{active}），岗位硬性条件高度匹配，酌情保留"
-		)
-		result.checks["boss_active"] = True
-		return result
-
 	result.failures.append(inactive_msg)
 	result.passed = False
 	return result

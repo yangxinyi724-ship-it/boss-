@@ -60,6 +60,9 @@ def test_analysis_ai_career_stage_mode():
 	job = result.passed_jobs[0] if result.passed_jobs else result.filtered_jobs[0]
 	assert job.get("evaluation_mode") == "career_stage"
 	assert job.get("career_stage_label")
+	assert "rag_references" in job
+	assert "rag_meta" in job
+	assert isinstance(job["rag_references"], list)
 
 
 def test_analysis_ai_legacy_mode_when_disabled():

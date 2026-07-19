@@ -200,6 +200,7 @@ class AdaptiveScore:
 	priority: Priority = "medium"
 	dimensions: dict[str, int] = field(default_factory=dict)
 	rag_references: list[dict[str, Any]] = field(default_factory=list)
+	rag_meta: dict[str, Any] = field(default_factory=dict)
 	review_plan: dict[str, Any] | None = None
 
 	def to_dict(self) -> dict[str, Any]:
@@ -210,6 +211,7 @@ class AdaptiveScore:
 			"priority": self.priority,
 			"dimensions": self.dimensions,
 			"rag_references": self.rag_references,
+			"rag_meta": self.rag_meta,
 			"review_plan": self.review_plan,
 		}
 

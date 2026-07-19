@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from pet_boss.ai.config import AIConfigStore, resolve_embedding_model, rag_enabled as config_rag_enabled
+from pet_boss.ai.config import (
+	AIConfigStore,
+	resolve_embedding_base_url,
+	resolve_embedding_model,
+	rag_enabled as config_rag_enabled,
+)
 from pet_boss.ai.service import AIService, AIServiceError
 from pet_boss.cache.store import CacheStore
 from pet_boss.profile.store import ProfileStore
@@ -34,13 +40,34 @@ def _vector_store(store: ProfileStore) -> VectorStore:
 
 
 def _embed_one(ai_service: AIService, text: str) -> list[float]:
+	base_url = getattr(ai_service, "embedding_base_url", None) or ai_service.base_url
+	api_key = getattr(ai_service, "embedding_api_key", None) or ai_service.api_key
 	vectors = embed_texts(
-		base_url=ai_service.base_url,
-		api_key=ai_service.api_key,
+		base_url=base_url,
+		api_key=api_key,
 		model=ai_service.embedding_model,
 		texts=[text],
 	)
 	return vectors[0] if vectors else []
+
+
+def _cache_for_backfill(
+	profile_store: ProfileStore,
+	cache: CacheStore | None,
+) -> CacheStore | None:
+	if cache is not None:
+		return cache
+	data_dir = getattr(profile_store, "_dir", None)
+	if data_dir is None:
+		return None
+	# profile_store._dir = <data_dir>/profile
+	db_path = Path(data_dir).parent / "cache" / "boss_agent.db"
+	if not db_path.exists():
+		return None
+	try:
+		return CacheStore(db_path)
+	except Exception:
+		return None
 
 
 def index_analysis_job(
@@ -146,12 +173,15 @@ def backfill_analysis_records(
 		key = analysis_doc_key(sid, jid)
 		if key in existing:
 			continue
-		payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else rec
-		job = dict(payload) if isinstance(payload, dict) else dict(rec)
+		# list_recent_analysis_records 把 payload 解析到 job 字段
+		nested = rec.get("job") if isinstance(rec.get("job"), dict) else None
+		job = dict(nested) if nested else {}
 		job.setdefault("security_id", sid)
 		job.setdefault("job_id", jid)
 		job.setdefault("title", rec.get("title"))
 		job.setdefault("company", rec.get("company"))
+		job.setdefault("city", rec.get("city"))
+		job.setdefault("salary", rec.get("salary"))
 		job.setdefault("analysis_score", rec.get("analysis_score"))
 		if index_analysis_job(
 			profile_store,
@@ -177,22 +207,68 @@ def retrieve_similar(
 	exclude_security_id: str = "",
 	exclude_job_id: str = "",
 ) -> list[RagHit]:
+	hits, _meta = retrieve_similar_with_meta(
+		profile_store,
+		ai_service,
+		job,
+		top_k=top_k,
+		min_score=min_score,
+		search_query=search_query,
+		search_city=search_city,
+		exclude_security_id=exclude_security_id,
+		exclude_job_id=exclude_job_id,
+	)
+	return hits
+
+
+def retrieve_similar_with_meta(
+	profile_store: ProfileStore,
+	ai_service: AIService,
+	job: dict[str, Any],
+	*,
+	top_k: int = 5,
+	min_score: float = 0.35,
+	search_query: str = "",
+	search_city: str = "",
+	exclude_security_id: str = "",
+	exclude_job_id: str = "",
+) -> tuple[list[RagHit], dict[str, Any]]:
+	"""检索相似历史，并返回可展示的准确原因元数据。"""
+	meta: dict[str, Any] = {
+		"enabled": bool(ai_service.rag_enabled),
+		"min_score": min_score,
+		"vector_count": 0,
+		"hit_count": 0,
+		"best_score": None,
+		"code": "ok",
+		"message": "",
+	}
 	if not ai_service.rag_enabled:
-		return []
+		meta["code"] = "rag_disabled"
+		meta["message"] = "向量 RAG 未启用（当前对话平台无原生 Embedding，且未配置独立 Embedding 网关）。"
+		return [], meta
+
+	vs = _vector_store(profile_store)
+	meta["vector_count"] = vs.count()
 	query_text = job_query_text(job, search_query=search_query, search_city=search_city)
 	try:
 		query_vec = _embed_one(ai_service, query_text)
-	except AIServiceError:
-		return []
+	except AIServiceError as exc:
+		meta["code"] = "embed_failed"
+		meta["message"] = f"Embedding 调用失败：{exc}"
+		return [], meta
 	if not query_vec:
-		return []
+		meta["code"] = "embed_failed"
+		meta["message"] = "Embedding 返回空向量。"
+		return [], meta
 
-	vs = _vector_store(profile_store)
 	docs = vs.list_documents(limit=3000)
 	if not docs:
-		return []
+		meta["code"] = "empty_store"
+		meta["message"] = "向量库为空，尚无成功入库的历史分析/拒绝案例。"
+		return [], meta
 
-	hits: list[RagHit] = []
+	scored: list[tuple[float, RagHit]] = []
 	for doc in docs:
 		if not doc.embedding:
 			continue
@@ -204,17 +280,79 @@ def retrieve_similar(
 		):
 			continue
 		score = cosine_similarity(query_vec, doc.embedding)
-		if score < min_score:
-			continue
-		hits.append(RagHit(
+		scored.append((score, RagHit(
 			doc_key=doc.doc_key,
 			source_type=doc.source_type,
 			score=score,
 			text=doc.text,
 			metadata=doc.metadata,
-		))
-	hits.sort(key=lambda h: h.score, reverse=True)
-	return hits[:top_k]
+		)))
+	if not scored:
+		meta["code"] = "empty_store"
+		meta["message"] = "向量库无可用向量（记录可能尚未完成 Embedding）。"
+		return [], meta
+
+	scored.sort(key=lambda x: x[0], reverse=True)
+	meta["best_score"] = round(scored[0][0], 4)
+	hits = [h for s, h in scored if s >= min_score][:top_k]
+	meta["hit_count"] = len(hits)
+	if hits:
+		meta["code"] = "ok"
+		meta["message"] = ""
+		return hits, meta
+
+	meta["code"] = "below_threshold"
+	meta["message"] = (
+		f"向量库有 {meta['vector_count']} 条案例，但与本岗最高相似度 "
+		f"{meta['best_score']:.0%} 低于阈值 {min_score:.0%}，故未展示参考。"
+	)
+	return [], meta
+
+
+def rag_miss_message_for_display(
+	*,
+	references: list[dict[str, Any]] | None,
+	rag_meta: dict[str, Any] | None,
+	current_vector_count: int | None = None,
+) -> str:
+	"""资料柜空参考时的准确说明文案。"""
+	refs = references or []
+	if refs:
+		return ""
+	meta = rag_meta if isinstance(rag_meta, dict) else {}
+	code = str(meta.get("code") or "")
+	msg = str(meta.get("message") or "").strip()
+	if msg:
+		return msg
+	if code == "rag_disabled":
+		return "分析时向量 RAG 未启用（对话平台无原生 Embedding，且未配置独立 Embedding 网关）。"
+	if code == "embed_failed":
+		return "分析时 Embedding 调用失败，未写入参考案例。"
+	if code == "empty_store":
+		return "分析时向量库为空，尚无成功入库的历史案例。"
+	if code == "below_threshold":
+		best = meta.get("best_score")
+		thr = meta.get("min_score", 0.35)
+		if best is not None:
+			return (
+				f"分析时向量库有案例，但最高相似度 {float(best):.0%} "
+				f"低于阈值 {float(thr):.0%}。"
+			)
+		return "分析时相似度未达阈值，未写入参考案例。"
+	# 历史空结果（当时未写 rag_meta）
+	# 常见于：职业阶段评估路径曾未接入 RAG；或 Embedding 未通导致未检索。
+	n = current_vector_count
+	if n is None:
+		n = meta.get("vector_count")
+	if isinstance(n, int) and n > 0:
+		return (
+			"该岗位分析当时未保存 RAG 参考（职业阶段评估曾未接入向量检索，"
+			"或当时 Embedding/入库异常）。"
+			f"这与「分析记录多」不同：只有已 Embedding 的才算向量案例。"
+			f"当前向量库有 {n} 条；重启后新分析会写入参考与准确原因。"
+			"分析打分本身不受影响。"
+		)
+	return "本次分析未命中向量库中的相似历史案例；分析打分本身不受影响。"
 
 
 def rag_hits_to_references(hits: list[RagHit]) -> list[dict[str, Any]]:
@@ -286,15 +424,75 @@ def retrieve_analysis_rag_context(
 	top_k: int = 5,
 ) -> str:
 	"""分析前检索相似历史，返回可拼入 Prompt 的文本；失败时返回空串。"""
-	if profile_store is None or ai_service is None or not ai_service.rag_enabled:
-		return ""
+	result = retrieve_analysis_rag_result(
+		profile_store,
+		ai_service,
+		job,
+		cache=cache,
+		search_query=search_query,
+		search_city=search_city,
+		top_k=top_k,
+	)
+	return format_rag_context_from_references(result["references"])
+
+
+def retrieve_analysis_rag_result(
+	profile_store: ProfileStore | None,
+	ai_service: AIService | None,
+	job: dict[str, Any],
+	*,
+	cache: CacheStore | None = None,
+	search_query: str = "",
+	search_city: str = "",
+	top_k: int = 5,
+) -> dict[str, Any]:
+	"""返回 references + meta（含准确未命中原因），供分析持久化与资料柜展示。"""
+	if profile_store is None or ai_service is None:
+		return {
+			"references": [],
+			"meta": {
+				"enabled": False,
+				"vector_count": 0,
+				"hit_count": 0,
+				"best_score": None,
+				"min_score": 0.35,
+				"code": "no_ai",
+				"message": "分析时未配置 AI 服务，无法做向量检索。",
+			},
+		}
+	if not ai_service.rag_enabled:
+		return {
+			"references": [],
+			"meta": {
+				"enabled": False,
+				"vector_count": 0,
+				"hit_count": 0,
+				"best_score": None,
+				"min_score": 0.35,
+				"code": "rag_disabled",
+				"message": "向量 RAG 未启用（当前对话平台无原生 Embedding，且未配置独立 Embedding 网关）。",
+			},
+		}
+
+	owned_cache: CacheStore | None = None
 	try:
-		if cache is not None and _vector_store(profile_store).count() < 3:
-			backfill_analysis_records(profile_store, cache, ai_service, limit=60)
+		if _vector_store(profile_store).count() < 3:
+			bf_cache = _cache_for_backfill(profile_store, cache)
+			if bf_cache is not None and cache is None:
+				owned_cache = bf_cache
+			if bf_cache is not None:
+				backfill_analysis_records(profile_store, bf_cache, ai_service, limit=60)
 	except Exception:
 		pass
+	finally:
+		if owned_cache is not None:
+			try:
+				owned_cache.close()
+			except Exception:
+				pass
+
 	try:
-		hits = retrieve_similar(
+		hits, meta = retrieve_similar_with_meta(
 			profile_store,
 			ai_service,
 			job,
@@ -304,9 +502,23 @@ def retrieve_analysis_rag_context(
 			exclude_security_id=str(job.get("security_id") or ""),
 			exclude_job_id=str(job.get("job_id") or ""),
 		)
-	except Exception:
-		return ""
-	return format_rag_context_from_references(rag_hits_to_references(hits))
+	except Exception as exc:
+		return {
+			"references": [],
+			"meta": {
+				"enabled": True,
+				"vector_count": _vector_store(profile_store).count(),
+				"hit_count": 0,
+				"best_score": None,
+				"min_score": 0.35,
+				"code": "retrieve_error",
+				"message": f"向量检索异常：{exc}",
+			},
+		}
+	return {
+		"references": rag_hits_to_references(hits),
+		"meta": meta,
+	}
 
 
 def retrieve_analysis_rag_hits(
@@ -319,28 +531,16 @@ def retrieve_analysis_rag_hits(
 	search_city: str = "",
 	top_k: int = 5,
 ) -> list[dict[str, Any]]:
-	"""返回结构化 RAG 参考案例，供分析结果持久化与资料柜展示。"""
-	if profile_store is None or ai_service is None or not ai_service.rag_enabled:
-		return []
-	try:
-		if cache is not None and _vector_store(profile_store).count() < 3:
-			backfill_analysis_records(profile_store, cache, ai_service, limit=60)
-	except Exception:
-		pass
-	try:
-		hits = retrieve_similar(
-			profile_store,
-			ai_service,
-			job,
-			top_k=top_k,
-			search_query=search_query,
-			search_city=search_city,
-			exclude_security_id=str(job.get("security_id") or ""),
-			exclude_job_id=str(job.get("job_id") or ""),
-		)
-	except Exception:
-		return []
-	return rag_hits_to_references(hits)
+	"""兼容旧接口：仅返回参考案例列表。"""
+	return retrieve_analysis_rag_result(
+		profile_store,
+		ai_service,
+		job,
+		cache=cache,
+		search_query=search_query,
+		search_city=search_city,
+		top_k=top_k,
+	)["references"]
 
 
 def build_ai_service_with_embeddings(data_dir) -> AIService | None:
@@ -363,5 +563,7 @@ def build_ai_service_with_embeddings(data_dir) -> AIService | None:
 		max_tokens=config.get("ai_max_tokens", 4096),
 		usage_store=get_token_usage_store(data_dir),
 		embedding_model=resolve_embedding_model(config),
+		embedding_base_url=resolve_embedding_base_url(config),
+		embedding_api_key=store.get_embedding_api_key(),
 		rag_enabled=config_rag_enabled(config),
 	)

@@ -9,7 +9,7 @@ from pet_boss.agents.planners.base import clamp_int, parse_llm_json_object
 from pet_boss.ai.service import AIService
 from pet_boss.profile.models import AdaptiveScore, UserProfile
 from pet_boss.profile.store import ProfileStore
-from pet_boss.rag.retriever import retrieve_analysis_rag_hits
+from pet_boss.rag.retriever import retrieve_analysis_rag_result
 
 REVIEW_PROMPT = """你是分析 AI 复核员。初始评分接近通过线，请结合 RAG 历史案例做二次判断。
 
@@ -49,7 +49,9 @@ def maybe_review_borderline_score(
 	if ai_service is None or not is_borderline_score(result.score, pass_score):
 		return result
 
-	rag_refs = retrieve_analysis_rag_hits(store, ai_service, job, top_k=4)
+	rag_bundle = retrieve_analysis_rag_result(store, ai_service, job, top_k=4)
+	rag_refs = rag_bundle.get("references") or []
+	rag_meta = rag_bundle.get("meta") or result.rag_meta or {}
 	prompt = REVIEW_PROMPT.format(
 		pass_score=pass_score,
 		initial_score=result.score,
@@ -89,6 +91,7 @@ def maybe_review_borderline_score(
 		"review_reason": review_reason,
 		"review_risk": review_risk,
 		"rag_references": rag_refs,
+		"rag_meta": rag_meta,
 	}
 
 	new_score = result.score
@@ -109,5 +112,6 @@ def maybe_review_borderline_score(
 		priority=result.priority,
 		dimensions=result.dimensions,
 		rag_references=result.rag_references or rag_refs,
+		rag_meta=result.rag_meta or rag_meta,
 		review_plan=review_plan,
 	)

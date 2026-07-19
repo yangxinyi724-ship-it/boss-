@@ -26,18 +26,23 @@ def score_dimensions_with_ai(
 	candidate: CandidateProfile,
 	stage: CareerStage,
 	dimension_keys: list[str],
+	*,
+	rag_context: str = "",
 ) -> dict[str, DimensionResult]:
 	labels = {k: DIMENSION_LABELS.get(k, k) for k in dimension_keys}
+	rag_block = f"\n{rag_context}\n" if (rag_context or "").strip() else ""
 	prompt = (
 		f"职业阶段：{STAGE_LABELS[stage]}（{stage}）\n"
 		f"候选画像：{json.dumps(_candidate_for_prompt(candidate), ensure_ascii=False)}\n"
 		f"岗位：{json.dumps(job, ensure_ascii=False)[:6000]}\n"
+		f"{rag_block}"
 		f"请对以下维度评分（0-100），进行语义分析而非简单关键词：\n"
 		f"{json.dumps(labels, ensure_ascii=False)}\n"
 		"输出 JSON：{\"dimensions\": {\"key\": {\"score\": 0, \"confidence\": 0.0, "
 		"\"evidence\": [\"...\"], \"reasoning\": \"...\"}}}\n"
 		"evidence 与 reasoning 必须使用简体中文，禁止出现 medium/low/high 等英文等级词；"
 		"不要复述候选人画像字段（如风险偏好）。"
+		"若有向量 RAG 历史案例，可作参考但勿机械照搬分数。"
 	)
 	raw = svc.chat([
 		{"role": "system", "content": "你是分析 AI（FX），专注职业阶段匹配评估。只输出 JSON，文案用简体中文。"},

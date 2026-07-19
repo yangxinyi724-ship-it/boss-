@@ -163,17 +163,36 @@ def test_sse_droppable_helper():
 
 
 def test_scout_should_fanout_skips_browse_noise():
-	# 浏览岗位信息会推送；心跳仍不推
+	# 浏览岗位信息与休息心跳会推送；其它碎类型不推
 	assert web_server._scout_should_fanout(("event", {"type": "scout_seen"})) is True
 	assert web_server._scout_should_fanout(("event", {"type": "scout_filter"})) is True
 	assert web_server._scout_should_fanout(("event", {"type": "scout_skip"})) is True
-	assert web_server._scout_should_fanout(("event", {"type": "scout_heartbeat"})) is False
+	assert web_server._scout_should_fanout(("event", {"type": "scout_heartbeat"})) is True
 	assert web_server._scout_should_fanout(("event", {"type": "job_passed"})) is True
 	assert web_server._scout_should_fanout(("event", {"type": "page_start"})) is True
 	assert web_server._scout_should_fanout(("done", None)) is True
 	assert "scout_seen" in web_server._SCOUT_SSE_BROWSE_TYPES
 	assert "scout_seen" not in web_server._SCOUT_SSE_RING_TYPES
+	assert "scout_heartbeat" in web_server._SCOUT_SSE_SOFT_TYPES
 
+
+def test_live_snapshot_exposes_planned_pause():
+	web_server._start_scout_live()
+	web_server._extend_scout_pause_until({
+		"type": "round_pause",
+		"pause_sec": 180,
+		"message": "本轮休息 180 秒后开始下一轮…",
+	})
+	snap = web_server._scout_live_snapshot()
+	assert snap["in_planned_pause"] is True
+	assert snap["pause_remaining_sec"] > 100
+	assert snap["pause_type"] == "round_pause"
+	assert "本轮休息" in snap["pause_message"]
+	web_server._extend_scout_pause_until({"type": "round_resume"})
+	snap2 = web_server._scout_live_snapshot()
+	assert snap2["in_planned_pause"] is False
+	assert snap2["pause_remaining_sec"] == 0.0
+	assert snap2["pause_type"] == ""
 
 
 def test_note_event_keeps_passed_jobs_and_stats():
