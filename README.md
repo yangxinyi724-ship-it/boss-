@@ -13,21 +13,23 @@
 
 ## 演示
 
+> 当前成片约 428×240。要清晰请用 **1280×720 以上** 重录，覆盖 `docs/media/*.mp4`。
+
 ### 登录
 
-<img src="docs/media/demo-login.gif" alt="登录演示" width="100%" />
+<video src="docs/media/demo-login.mp4" controls width="100%" muted playsinline></video>
 
 ### 上传简历
 
-<img src="docs/media/demo-resume.gif" alt="上传简历演示" width="100%" />
+<video src="docs/media/demo-resume.mp4" controls width="100%" muted playsinline></video>
 
 ### 搜岗
 
-<img src="docs/media/demo-scout.gif" alt="搜岗演示" width="100%" />
+<video src="docs/media/demo-scout.mp4" controls width="100%" muted playsinline></video>
 
 ### RAG
 
-<img src="docs/media/demo-reject.gif" alt="RAG 演示" width="100%" />
+<video src="docs/media/demo-reject.mp4" controls width="100%" muted playsinline></video>
 
 ---
 
