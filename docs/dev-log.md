@@ -8,6 +8,11 @@
 
 # 2026-07-20
 
+## Docker 一键部署（Web + Chromium）
+- **类型**：功能 / 文档
+- **新增**：`Dockerfile`、`docker-compose.yml`、`.env.example`、`.dockerignore`、`docs/docker.md`
+- **改动**：README 增加 Docker 入口；`.gitignore` 忽略 `.env`；镜像含 patchright Chromium，数据卷 `boss-data` 持久化
+
 ## README 演示改回 GIF 内嵌播放
 - **类型**：文档 / 修复
 - **问题**：GitHub README 不支持 `<video>` 内嵌，封面点击播放体验仍不够直接

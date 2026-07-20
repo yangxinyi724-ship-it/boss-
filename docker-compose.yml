@@ -1,0 +1,19 @@
+services:
+  boss:
+    build: .
+    image: boss-agent:local
+    container_name: boss-agent
+    ports:
+      - "${BOSS_PORT:-8787}:8787"
+    volumes:
+      # 每人一份本地数据（登录态 / 画像 / SQLite / 简历）；勿提交到 Git
+      - boss-data:/data
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 一般不必设置：密钥会写进数据卷 /data/auth/machine.id，重建容器仍可解密
+      # 仅在「整卷迁到另一台机器」等特殊场景才需要自行配置（见 docs/docker.md）
+      BOSS_AGENT_MACHINE_ID: ${BOSS_AGENT_MACHINE_ID:-}
+    restart: unless-stopped
+
+volumes:
+  boss-data:

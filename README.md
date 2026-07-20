@@ -75,6 +75,18 @@ pip install -e ".[web,dev]"
 python -m patchright install chromium
 ```
 
+### Docker（可选）
+
+人人可跑：装好 [Docker](https://docs.docker.com/get-docker/) 后执行：
+
+```bash
+docker compose up -d --build
+```
+
+浏览器打开 **http://127.0.0.1:8787**。登录请在监控 AI 扫码或粘贴 Token（容器内无法同步本机浏览器 Cookie）。
+
+完整步骤、多人数据隔离、常见问题见 **[docs/docker.md](docs/docker.md)**。
+
 ---
 
 ## 快速开始
@@ -85,7 +97,7 @@ boss web
 boss profile web
 ```
 
-浏览器打开提示地址（一般为 `http://127.0.0.1:8765`），默认进入 **`/pet`**。
+浏览器打开提示地址（一般为 `http://127.0.0.1:8787`），默认进入 **`/pet`**。
 
 **建议上手顺序**
 
