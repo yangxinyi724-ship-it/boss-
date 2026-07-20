@@ -15,19 +15,19 @@
 
 ### 登录
 
-![登录演示](docs/media/demo-login.gif)
+<img src="docs/media/demo-login.gif" alt="登录演示" width="100%" />
 
 ### 上传简历
 
-![上传简历演示](docs/media/demo-resume.gif)
+<img src="docs/media/demo-resume.gif" alt="上传简历演示" width="100%" />
 
 ### 搜岗
 
-![搜岗演示](docs/media/demo-scout.gif)
+<img src="docs/media/demo-scout.gif" alt="搜岗演示" width="100%" />
 
 ### RAG
 
-![RAG 演示](docs/media/demo-reject.gif)
+<img src="docs/media/demo-reject.gif" alt="RAG 演示" width="100%" />
 
 ---
 
