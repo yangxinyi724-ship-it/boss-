@@ -13,21 +13,23 @@
 
 ## 演示
 
+> GitHub README 不内嵌播放 `<video>`，下方为封面预览；**点击封面即可播放**。
+
 ### 登录
 
-<video src="docs/media/demo-login.mp4" controls width="100%" muted playsinline></video>
+[![登录演示](docs/media/demo-login.jpg)](docs/media/demo-login.mp4)
 
 ### 上传简历
 
-<video src="docs/media/demo-resume.mp4" controls width="100%" muted playsinline></video>
+[![上传简历演示](docs/media/demo-resume.jpg)](docs/media/demo-resume.mp4)
 
 ### 搜岗
 
-<video src="docs/media/demo-scout.mp4" controls width="100%" muted playsinline></video>
+[![搜岗演示](docs/media/demo-scout.jpg)](docs/media/demo-scout.mp4)
 
 ### RAG
 
-<video src="docs/media/demo-reject.mp4" controls width="100%" muted playsinline></video>
+[![RAG 演示](docs/media/demo-reject.jpg)](docs/media/demo-reject.mp4)
 
 ---
 
