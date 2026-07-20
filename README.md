@@ -13,12 +13,21 @@
 
 ## 演示
 
-| | |
-|---|---|
-| **登录** | ![登录演示](docs/media/demo-login.gif) |
-| **上传简历** | ![上传简历演示](docs/media/demo-resume.gif) |
-| **搜岗** | ![搜岗演示](docs/media/demo-scout.gif) |
-| **RAG** | ![RAG 演示](docs/media/demo-reject.gif) |
+### 登录
+
+![登录演示](docs/media/demo-login.gif)
+
+### 上传简历
+
+![上传简历演示](docs/media/demo-resume.gif)
+
+### 搜岗
+
+![搜岗演示](docs/media/demo-scout.gif)
+
+### RAG
+
+![RAG 演示](docs/media/demo-reject.gif)
 
 ---
 
