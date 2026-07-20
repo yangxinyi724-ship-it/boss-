@@ -13,8 +13,6 @@
 
 ## 演示
 
-> 当前成片约 428×240。要清晰请用 **1280×720 以上** 重录，覆盖 `docs/media/*.mp4`。
-
 ### 登录
 
 <video src="docs/media/demo-login.mp4" controls width="100%" muted playsinline></video>
