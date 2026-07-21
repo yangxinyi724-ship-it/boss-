@@ -82,7 +82,7 @@ boss eval --labels <path>        # 指定其它标注集
 boss doctor           # 环境自检
 ```
 
-Web：宠物页办公室场景**下方**有「决策监控」区块（下滚可见），展示观测汇总 / 评测 / **RAG 决策对比**；接口 `GET /api/boss/insights`、`POST /api/boss/eval`、`POST /api/boss/eval/capture`、`POST /api/boss/rag-ablation`。策略/换词决策仍写入 `decisions.jsonl`（不在页内列表展示）。
+Web：宠物页办公室场景**下方**有「监控台」区块（下滚可见），展示观测汇总 / 评测 / **RAG 决策对比**；接口 `GET /api/boss/insights`、`POST /api/boss/eval`、`POST /api/boss/eval/capture`、`POST /api/boss/rag-ablation`。策略/换词决策仍写入 `decisions.jsonl`（不在页内列表展示）。
 
 ```bash
 boss eval --rag-ablation --limit 5   # 有/无 RAG 对照打分（耗 Token）

@@ -37,7 +37,7 @@ def run_eval_report(path: Path) -> dict[str, Any]:
 	p = Path(path)
 	if not p.exists():
 		raise FileNotFoundError(
-			f"标注集不存在: {p}\n请先在决策监控点「抓取评测集」，或执行 boss eval --capture"
+			f"标注集不存在: {p}\n请先在监控台点「抓取评测集」，或执行 boss eval --capture"
 		)
 	bundle = load_label_cases(p)
 	pass_score = float(bundle.get("pass_score") or 60)
