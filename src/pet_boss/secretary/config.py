@@ -1,4 +1,4 @@
-"""秘书 AI 配置 — 收件邮箱、SMTP、小红书发布。"""
+"""秘书 AI 配置 — 收件邮箱、SMTP、日报。"""
 
 from __future__ import annotations
 
@@ -15,12 +15,6 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 		"password": "",
 		"use_tls": True,
 		"from_address": "",
-	},
-	"xiaohongshu": {
-		"enabled": True,
-		"mode": "file",
-		"nickname": "",
-		"hashtags": ["求职日记", "AI办公", "打工人日常", "岗位筛选"],
 	},
 	"report": {
 		"title_prefix": "【AI 办公室】岗位筛选日报",

@@ -57,6 +57,9 @@ web = [
 	"pypdf>=4.0",
 	"python-multipart>=0.0.9",
 ]
+rag = [
+	"chromadb>=0.5.0",
+]
 
 [project.scripts]
 boss = "pet_boss.main:cli"

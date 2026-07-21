@@ -29,6 +29,10 @@
 
 ![RAG 演示](docs/media/demo-reject.gif)
 
+### 工程洞察
+
+![工程洞察](docs/media/demo-insights.png)
+
 ---
 
 ## 项目概览
@@ -41,11 +45,12 @@
 |------|--------|
 | **AI 办公室** | 像素场景多工位；浏览器打开即可操作 |
 | **侦察 AI** | 省 → 市 → 区；硬性筛选；列表扫完再换词 |
-| **分析 AI** | 对候选岗打分；通过分可调；结果进岗位栏与资料柜 |
+| **分析 AI** | 对候选岗打分（可参考向量 RAG）；通过分可调；结果进岗位栏与资料柜 |
 | **监控 AI** | BOSS 登录 / Token；浏览器异常时可重启自动化窗口 |
 | **秘书 AI** | 简历解析、画像、日报 / 精选、邮箱 |
+| **工程洞察** | 页底观测汇总 / 评测 / RAG 有无对照；可抓取评测集 |
 | **工作时间表** | 按时段自动开搜 / 下班暂停 |
-| **CLI** | 登录、状态、城市、自检等，与 Web 共用登录态 |
+| **CLI** | 登录、状态、城市、自检、观测、评测等，与 Web 共用登录态 |
 
 
 ## 环境要求
@@ -77,7 +82,7 @@ python -m patchright install chromium
 
 ### Docker（可选）
 
-人人可跑：装好 [Docker](https://docs.docker.com/get-docker/) 后执行：
+装好 [Docker](https://docs.docker.com/get-docker/) 后执行：
 
 ```bash
 docker compose up -d --build
@@ -86,6 +91,8 @@ docker compose up -d --build
 浏览器打开 **http://127.0.0.1:8787**。登录请在监控 AI 扫码或粘贴 Token（容器内无法同步本机浏览器 Cookie）。
 
 完整步骤、多人数据隔离、常见问题见 **[docs/docker.md](docs/docker.md)**。
+
+架构与数据流见 **[docs/architecture.md](docs/architecture.md)**。
 
 ---
 
@@ -106,6 +113,7 @@ boss profile web
 3. **侦察 AI**：选省 → 市（→ 区），保存筛选条件  
 4. 顶部栏：**开始搜岗**（或等待工作时段自动启动）  
 5. 右侧栏查看 **分析通过** 的岗位；资料柜可回看历史通过 / 精选 / 候选池  
+6. 页面向下滚到 **工程洞察**：观测汇总、抓取/跑评测、RAG 有无对照  
 
 改完 `pet.js` / `pet.css` 后刷新即可（`/pet` 按文件 mtime 自动带 `?v=`）。
 
@@ -138,6 +146,9 @@ boss login          # 登录（Cookie / CDP / 扫码等）
 boss status         # 登录与环境状态
 boss cities         # 城市列表
 boss doctor         # 环境自检
+boss metrics        # 搜岗观测汇总（页码/跳过/通过等）
+boss eval --capture # 抓取评测集 → eval_today.json
+boss eval           # 跑标注评测（默认用今日集）
 boss web            # 启动 Web 办公室
 ```
 
@@ -153,13 +164,16 @@ boss --data-dir ~/.boss-agent --log-level info web
 src/pet_boss/
   web/           # Starlette 服务 + 宠物页 static
   agents/        # 侦察 / 分析 / 监控 / 秘书管道
+  rag/           # 向量 RAG（sqlite / chroma）
+  observability/ # 搜岗事件 JSONL 与汇总
+  eval/          # 标注集评测
   api/           # BOSS API 与浏览器会话
   auth/          # 登录态
   profile/       # 用户画像
   secretary/     # 秘书配置与报告
   commands/      # CLI 子命令
 tests/           # pytest
-docs/media/      # README 演示动图（自备 GIF）
+docs/            # architecture / docker / media
 ```
 
 面向用户的新功能与 UI，优先改宠物页：

@@ -21,13 +21,21 @@ def persist_analysis_result(
 	channel: str = "",
 	store: ProfileStore | None = None,
 	ai_service: AIService | None = None,
-) -> int:
-	"""将一次 analyze 的通过/过滤岗位写入 SQLite，并更新侦察历史与 AI 记忆。"""
+	profile: Any | None = None,
+) -> tuple[int, dict[str, Any] | None]:
+	"""将一次 analyze 的通过/过滤岗位写入 SQLite，并更新侦察历史与 AI 记忆。
+
+	返回 (写入条数, 最新 RAG 消融报告或 None)。
+	"""
+	from pet_boss.eval.rag_ablation import record_live_rag_ablation_for_job
 	from pet_boss.rag.service import index_analysis_job
 
 	query = criteria.query if criteria else ""
 	city = criteria.city if criteria else ""
 	count = 0
+	ablation: dict[str, Any] | None = None
+	data_dir = store._dir.parent if store is not None else None
+
 	for job in result.passed_jobs:
 		cache.record_analysis_job(
 			job, "passed",
@@ -50,6 +58,20 @@ def persist_analysis_result(
 					search_city=city or "",
 				)
 		count += 1
+		if data_dir is not None and store is not None and ai_service is not None:
+			try:
+				ablation = record_live_rag_ablation_for_job(
+					data_dir,
+					job,
+					store=store,
+					ai_service=ai_service,
+					profile=profile,
+					historical_status="passed",
+					search_city=city or None,
+				) or ablation
+			except Exception:
+				pass
+
 	for job in result.filtered_jobs:
 		cache.record_analysis_job(
 			job, "filtered",
@@ -72,7 +94,32 @@ def persist_analysis_result(
 					search_city=city or "",
 				)
 		count += 1
-	return count
+		# 硬筛直滤（无分析理由）不跑消融
+		if (
+			data_dir is not None
+			and store is not None
+			and ai_service is not None
+			and (
+				job.get("analysis_reason")
+				or job.get("profile_reason")
+				or job.get("rag_meta")
+				or int(job.get("analysis_score") or 0) > 0
+			)
+		):
+			try:
+				ablation = record_live_rag_ablation_for_job(
+					data_dir,
+					job,
+					store=store,
+					ai_service=ai_service,
+					profile=profile,
+					historical_status="filtered",
+					search_city=city or None,
+				) or ablation
+			except Exception:
+				pass
+
+	return count, ablation
 
 
 def day_record_summary(records: list[dict[str, Any]]) -> dict[str, Any]:

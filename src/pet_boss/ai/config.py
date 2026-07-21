@@ -36,6 +36,11 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 	"ai_embedding_base_url": None,
 	"ai_embedding_api_key": None,
 	"ai_rag_enabled": True,
+	"ai_rag_vector_backend": "sqlite",
+	"ai_rag_top_k": 5,
+	"ai_rag_expand_k": 8,
+	"ai_rag_min_score": 0.35,
+	"ai_rag_low_sim_score": 0.45,
 	"ai_temperature": 0.7,
 	"ai_max_tokens": 4096,
 	"token_price_input_cache_hit_per_m": 0.02,
@@ -116,6 +121,25 @@ def rag_enabled(config: dict[str, Any] | None = None) -> bool:
 	if not value:
 		return False
 	return has_embedding_endpoint(config)
+
+
+def rag_retrieve_params(config: dict[str, Any] | None = None) -> dict[str, Any]:
+	"""RAG 检索条数与相似度阈值（可被 config.json 覆盖）。"""
+	cfg = config or {}
+	top_k = int(cfg.get("ai_rag_top_k") or _DEFAULT_CONFIG["ai_rag_top_k"])
+	expand_k = int(cfg.get("ai_rag_expand_k") or _DEFAULT_CONFIG["ai_rag_expand_k"])
+	min_score = float(cfg.get("ai_rag_min_score") or _DEFAULT_CONFIG["ai_rag_min_score"])
+	low_sim = float(cfg.get("ai_rag_low_sim_score") or _DEFAULT_CONFIG["ai_rag_low_sim_score"])
+	top_k = max(1, min(top_k, 20))
+	expand_k = max(top_k, min(expand_k, 20))
+	min_score = min(max(min_score, 0.0), 1.0)
+	low_sim = min(max(low_sim, min_score), 1.0)
+	return {
+		"top_k": top_k,
+		"expand_k": expand_k,
+		"min_score": min_score,
+		"low_sim_score": low_sim,
+	}
 
 
 class AIConfigStore:

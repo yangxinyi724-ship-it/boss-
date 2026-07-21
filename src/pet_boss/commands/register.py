@@ -2,7 +2,7 @@
 
 import click
 
-from pet_boss.commands import cities, doctor, login, logout, schema, status
+from pet_boss.commands import cities, doctor, eval_cmd, login, logout, metrics, schema, status
 from pet_boss.commands import profile_cmd
 
 
@@ -13,6 +13,8 @@ def register_candidate_commands(cli: click.Group) -> None:
 	cli.add_command(logout.logout_cmd, "logout")
 	cli.add_command(status.status_cmd, "status")
 	cli.add_command(doctor.doctor_cmd, "doctor")
+	cli.add_command(metrics.metrics_cmd, "metrics")
+	cli.add_command(eval_cmd.eval_cmd, "eval")
 	cli.add_command(cities.cities_cmd, "cities")
 	cli.add_command(profile_cmd.profile_group, "profile")
 	cli.add_command(profile_cmd.web_cmd, "web")

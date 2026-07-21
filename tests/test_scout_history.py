@@ -103,7 +103,7 @@ def test_persist_analysis_updates_history_and_memory(tmp_path: Path):
 				"analysis_risk": [],
 			}],
 		)
-		count = persist_analysis_result(cache, result, channel="scout:golang:", store=store)
+		count, _ablation = persist_analysis_result(cache, result, channel="scout:golang:", store=store)
 		assert count == 1
 		assert cache.get_scout_history("s1:j1")["outcome"] == "passed"
 		mem = store.list_ai_memory(agent="analysis")

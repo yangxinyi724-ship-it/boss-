@@ -73,7 +73,6 @@
       <div class="pet-main">
         <header class="pet-header">
           <div>
-            <h1>AI 办公室</h1>
             <p id="petStatus">已侦察 0 · 侦察通过 0 · 分析通过 0</p>
           </div>
           <div class="pet-header-actions">
@@ -98,11 +97,6 @@
         </div>
 
         <div id="petLegend" class="pet-legend"></div>
-
-        <details class="pet-debug">
-          <summary>调试 · 手动切换动画</summary>
-          <div id="petDebugPanel" class="pet-debug-panel"></div>
-        </details>
       </div>
 
       <aside id="petJobSidebar" class="pet-job-sidebar" aria-label="通过岗位列表">
@@ -120,6 +114,48 @@
         </div>
       </aside>
     </div>
+
+    <section class="pet-insights" id="petInsights" aria-label="工程洞察">
+      <div class="pet-insights-inner">
+        <header class="pet-insights-head">
+          <div>
+            <h2 class="pet-insights-title">工程洞察</h2>
+            <p class="pet-insights-sub">观测汇总 · 标注评测 · RAG 对照 · 下滑本页即可查看</p>
+          </div>
+          <div class="pet-insights-actions">
+            <button type="button" class="pet-insights-btn pet-insights-btn--ghost" id="petInsightsCaptureEval" title="把当前通过岗位栏（不足则用分析库补齐）写成 eval_today.json">抓取评测集</button>
+            <button type="button" class="pet-insights-btn pet-insights-btn--ghost" id="petInsightsRunEval">跑评测</button>
+          </div>
+        </header>
+        <p class="pet-insights-status" id="petInsightsStatus">加载中…</p>
+        <div class="pet-insights-grid">
+          <article class="pet-insights-card" id="petInsightsMetricsCard">
+            <h3>观测汇总</h3>
+            <div class="pet-insights-card-body" id="petInsightsMetrics">—</div>
+          </article>
+          <article class="pet-insights-card" id="petInsightsEvalCard">
+            <h3>评测报告</h3>
+            <div class="pet-insights-card-body" id="petInsightsEval">—</div>
+          </article>
+          <article class="pet-insights-card pet-insights-card--wide" id="petInsightsRagCard">
+            <h3>RAG</h3>
+            <div class="pet-insights-card-body" id="petInsightsRagAblationBody">
+              <p class="pet-insights-empty">暂无对比结果。搜岗并完成分析后会自动更新（有/无 RAG 各记一次分）。</p>
+            </div>
+          </article>
+          <article class="pet-insights-card pet-insights-card--wide" id="petInsightsArchCard">
+            <h3>架构要点</h3>
+            <div class="pet-insights-card-body" id="petInsightsArch">
+              <ul class="pet-insights-arch-list">               
+                <li>RAG：默认 SQLite 向量表，可选 Chroma（<code>ai_rag_vector_backend</code>）</li>
+                <li>决策可审计：策略规划 / 换词写入 <code>decisions.jsonl</code></li>
+                <li>完整说明见仓库 <code>docs/architecture.md</code></li>
+              </ul>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
 
     <div id="petArchiveDrawer" class="pet-archive-modal" hidden>
       <div class="pet-archive-sheet" role="dialog" aria-labelledby="petArchiveDrawerTitle">

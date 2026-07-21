@@ -249,6 +249,79 @@ const PET_SCOUT_PROGRESS_SKIP_TYPES = new Set([
   "page_visible_resume",
   "search_progress",
 ]);
+/** catch-up / 丢弃高频事件时仍节流刷新 ZC 任务气泡，避免长期停在「搜岗中」 */
+let petScoutTaskBubbleAt = 0;
+const PET_SCOUT_TASK_BUBBLE_MIN_MS = 320;
+const PET_SCOUT_GENERIC_ZC_TASK = /^(搜岗中|继续搜岗|搜岗启动中|搜岗启动|待命中)$/;
+
+function scoutZcTaskLabelFromEvent(ev) {
+  const type = ev?.type || "";
+  switch (type) {
+    case "page_start":
+      return `浏览第 ${ev.page ?? "?"} 页`;
+    case "search_fetch":
+      return "拉取岗位列表";
+    case "search_progress":
+      return ev.page != null ? `拉取第 ${ev.page} 页` : "拉取岗位列表";
+    case "scout_seen":
+      return "发现新岗位";
+    case "scout_glance":
+      return truncateTaskLabel(ev.job?.title) || "浏览岗位";
+    case "scout_browse_skip":
+      return "跳过已浏览";
+    case "scout_history_skip":
+      return "跳过已侦察";
+    case "scout_filter":
+      return "筛选岗位";
+    case "scout_skip":
+      return "跳过岗位";
+    case "scout_duplicate":
+      return "重复岗位";
+    case "scout_transmit":
+      return "传送岗位";
+    case "page_done":
+      return "本页完成";
+    case "page_turn":
+      return truncateTaskLabel(ev.message) || "准备翻页";
+    case "page_empty":
+      return "本页无岗位";
+    case "round_resume":
+      return "继续搜岗";
+    default:
+      return "";
+  }
+}
+
+function applyScoutZcTaskBubble(ev, { force = false } = {}) {
+  if (!petLocalScouting || officeResting || scheduleOffHours || petScoutOffHoursPaused) {
+    return;
+  }
+  const label = scoutZcTaskLabelFromEvent(ev);
+  if (!label) return;
+  const now = Date.now();
+  if (!force && now - petScoutTaskBubbleAt < PET_SCOUT_TASK_BUBBLE_MIN_MS) return;
+  petScoutTaskBubbleAt = now;
+  if (shouldApplyWorkClips()) agents.ZC?.setClip("work");
+  setAgentTask("ZC", label);
+}
+
+function refreshScoutZcTaskBubbleFromLive(data) {
+  if (!petLocalScouting || officeResting || scheduleOffHours || petScoutOffHoursPaused) {
+    return;
+  }
+  const page = Number(data?.server_page);
+  const cur = String(agents.ZC?._taskBubbleText || "").trim();
+  const stale = !cur || PET_SCOUT_GENERIC_ZC_TASK.test(cur);
+  if (Number.isFinite(page) && page > 0 && (stale || forceLivePageBubble(cur, page))) {
+    applyScoutZcTaskBubble({ type: "page_start", page }, { force: stale });
+  }
+}
+
+function forceLivePageBubble(cur, page) {
+  const m = /^浏览第\s*(\d+)\s*页$/.exec(cur);
+  if (!m) return false;
+  return Number(m[1]) !== page;
+}
 
 function parseScheduleMinutes(value) {
   if (typeof value !== "string") return null;
@@ -786,7 +859,14 @@ function ragStatusLabel(status) {
 function summarizeRagReferencesBrief(refs) {
   const items = Array.isArray(refs) ? refs : [];
   if (!items.length) return "";
-  return `参考 ${items.length} 条`;
+  let best = null;
+  for (const ref of items) {
+    const sim = Number(ref?.similarity);
+    if (!Number.isFinite(sim)) continue;
+    if (best == null || sim > best) best = sim;
+  }
+  const simPart = best != null ? ` · 最高 ${(best * 100).toFixed(0)}%` : "";
+  return `参考 ${items.length} 条${simPart}`;
 }
 
 function formatReviewPlanHtml(review) {
@@ -933,7 +1013,13 @@ function formatRagReferencesHtml(refs, ragMeta, missMessage) {
       </article>
     `;
   }).join("");
-  return `<div class="pet-rag-ref-list">${rows}</div>`;
+  const best = Number(ragMeta?.best_score);
+  const bestText = Number.isFinite(best) ? `最高相似度 ${(best * 100).toFixed(0)}%` : "";
+  const expanded = ragMeta?.expanded ? "（低相似已扩召回）" : "";
+  const head = (bestText || expanded)
+    ? `<p class="pet-archive-hint">${escHtml(bestText)}${escHtml(expanded)}</p>`
+    : "";
+  return `${head}<div class="pet-rag-ref-list">${rows}</div>`;
 }
 
 function formatFilteredAnalysisListContent(data) {
@@ -5401,6 +5487,7 @@ function applyScoutLiveCatchUp(data, opts = {}) {
   // 用 last_message 补一条，避免停在几小时前的旧动作。
   if (petLocalScouting && !inPlannedPause) {
     pushScoutCatchUpActionFromLive(data);
+    if (!officeResting) refreshScoutZcTaskBubbleFromLive(data);
   } else if (data.last_message && opts.resumeUi && petMonitorSidebar && !officeResting) {
     petMonitorSidebar.progress = data.last_message;
   }
@@ -5476,6 +5563,7 @@ function enqueuePetScoutStreamEvent(event) {
   const type = event?.type || "";
   // 高频事件 meta 已同步；积压时跳过 UI 队列，避免主线程卡死导致 SSE 读不动
   if (PET_SCOUT_HIGH_FREQ_EVENTS.has(type) && petScoutEventQueue.length >= PET_SCOUT_UI_CATCHUP_THRESHOLD) {
+    applyScoutZcTaskBubble(event);
     return;
   }
   petScoutEventQueue.push(event);
@@ -6973,6 +7061,14 @@ class PetJobSidebar {
     return this.listEl?.querySelectorAll(".pet-job-card").length ?? 0;
   }
 
+  /** 当前侧边栏可见岗位（保留卡片上的完整 job 对象）。 */
+  getJobs() {
+    if (!this.listEl) return [];
+    return Array.from(this.listEl.querySelectorAll(".pet-job-card"))
+      .map((card) => card._petJob)
+      .filter((job) => job && typeof job === "object");
+  }
+
   updateCount() {
     const text = String(this.getJobCount());
     if (this.countEl) this.countEl.textContent = text;
@@ -7285,7 +7381,13 @@ function refreshIdleAgentTasks() {
     setAgentTask("JK", jkAlert ? "监控异常" : "待命中");
     setAgentTask("MS", "待命中");
   } else {
-    setAgentTask("ZC", "搜岗中");
+    // 搜岗中：ZC 任务气泡由事件 / live 同步维护，勿反复打回笼统「搜岗中」
+    const zcTask = String(agents.ZC?._taskBubbleText || "").trim();
+    if (!zcTask || PET_SCOUT_GENERIC_ZC_TASK.test(zcTask)) {
+      const page = petMonitorSidebar?.searchPage;
+      if (page > 0) setAgentTask("ZC", `浏览第 ${page} 页`);
+      else setAgentTask("ZC", "搜岗中");
+    }
     setAgentTask("FX", "待命分析");
     setAgentTask("JK", jkAlert ? "处理异常" : "监控浏览器");
     setAgentTask("MS", "待命中");
@@ -7344,6 +7446,17 @@ function handleScoutEvent(ev, opts = {}) {
     return;
   }
 
+  if (type === "rag_ablation_updated" && ev.rag_ablation) {
+    renderInsightsRagAblation(ev.rag_ablation);
+    const statusEl = document.getElementById("petInsightsStatus");
+    if (statusEl) {
+      const flip = ev.rag_ablation.flip_rate;
+      const flipTxt = flip != null ? ` · 决策翻转率 ${_insightsPct(flip)}` : "";
+      statusEl.textContent = `RAG 对比已随搜岗更新${flipTxt}`;
+    }
+    return;
+  }
+
   if (
     type === "browser_restart_begin"
     || type === "browser_restart_failed"
@@ -7382,6 +7495,7 @@ function handleScoutEvent(ev, opts = {}) {
       petScoutJobCount += 1;
       petDocumentCabinet?.markNew("passed_analysis");
     }
+    applyScoutZcTaskBubble(ev);
     return;
   }
 
@@ -7758,15 +7872,11 @@ function handleScoutEvent(ev, opts = {}) {
     }
 
     case "secretary_report":
-    case "secretary_vlog":
     case "secretary_run":
       agents.MS?.setClip("work");
       if (type === "secretary_run") {
         setAgentTask("MS", "整理日报");
-        setStatus("秘书 AI 正在整理昨日岗位日报与 vlog…");
-      } else if (type === "secretary_vlog") {
-        setAgentTask("MS", "生成 vlog");
-        setStatus("秘书 AI 正在生成小红书 vlog 文案…");
+        setStatus("秘书 AI 正在整理昨日岗位日报…");
       } else {
         setAgentTask("MS", "整理日报");
         setStatus("秘书 AI 正在整理岗位日报…");
@@ -7798,43 +7908,6 @@ function buildLegend() {
   el.appendChild(hint);
 }
 
-function buildDebugPanel() {
-  const panel = document.getElementById("petDebugPanel");
-  if (!panel || !petConfig) return;
-  panel.innerHTML = "";
-
-  for (const [id, cfg] of Object.entries(petConfig.characters)) {
-    if (cfg.enabled === false) continue;
-    const row = document.createElement("div");
-    row.className = "pet-debug-row";
-    const title = document.createElement("span");
-    title.textContent = cfg.label;
-    row.appendChild(title);
-
-    for (const clipKey of ["sit", "work", "walk", "run", "stroll", "sleepShort", "sleepLong"]) {
-      if (clipKey === "stroll") {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = CLIP_LABELS.stroll;
-        btn.addEventListener("click", () => agents[id]?.beginStroll());
-        row.appendChild(btn);
-        continue;
-      }
-      if (clipKey === "sleepLong" && (cfg.sleepVariants ?? 2) < 2 && !cfg.longRest) continue;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = CLIP_LABELS[clipKey] || clipKey;
-      if (clipKey === "sleepLong" && agents[id]?.canLongRest()) {
-        btn.addEventListener("click", () => agents[id]?.beginLongRest());
-      } else {
-        btn.addEventListener("click", () => agents[id]?.setClip(clipKey, true));
-      }
-      row.appendChild(btn);
-    }
-    panel.appendChild(row);
-  }
-}
-
 async function loadPetAssetMtimes() {
   try {
     const resp = await fetch(`/api/pet/asset-mtimes?t=${Date.now()}`, { cache: "no-store" });
@@ -7846,6 +7919,312 @@ async function loadPetAssetMtimes() {
   } catch {
     /* 降级为 desks.json 中的 assetVersion */
   }
+}
+
+function _insightsPct(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
+  return `${(x * 100).toFixed(1)}%`;
+}
+
+function _insightsEsc(text) {
+  return escHtml(String(text ?? ""));
+}
+
+function renderInsightsMetrics(data) {
+  const el = document.getElementById("petInsightsMetrics");
+  if (!el) return;
+  const totals = data?.metrics?.totals || {};
+  const latest = data?.metrics?.latest || {};
+  const backend = data?.vector_backend || "sqlite";
+  const ragOn = data?.rag_enabled !== false;
+  const stats = [
+    ["翻页", totals.page_starts ?? 0],
+    ["历史跳过", totals.history_skips ?? 0],
+    ["硬筛", totals.hard_filters ?? 0],
+    ["分析通过", totals.analysis_passed ?? 0],
+    ["分析筛掉", totals.analysis_filtered ?? 0],
+    ["换词", totals.query_switches ?? 0],
+    ["策略规划", totals.strategy_plans ?? 0],
+    ["错误/风控", totals.errors_or_risk ?? 0],
+  ];
+  const latestLine = latest?.type
+    ? `最近事件：${latest.type}${latest.page != null ? ` · 第 ${latest.page} 页` : ""}${latest.query ? ` · ${latest.query}` : ""}`
+    : "尚无观测事件（开始搜岗后会自动写入）";
+  el.innerHTML = `
+    <div class="pet-insights-stats">
+      ${stats.map(([label, value]) => `
+        <div class="pet-insights-stat">
+          <span class="pet-insights-stat-label">${_insightsEsc(label)}</span>
+          <span class="pet-insights-stat-value">${_insightsEsc(value)}</span>
+        </div>
+      `).join("")}
+    </div>
+    <p style="margin-top:10px">${_insightsEsc(latestLine)}</p>
+    <p class="pet-insights-mono" style="margin-top:6px">
+      向量后端 ${_insightsEsc(backend)} · RAG ${ragOn ? "开" : "关"}
+      ${data?.metrics?.log_path ? ` · ${_insightsEsc(data.metrics.log_path)}` : ""}
+    </p>
+  `;
+}
+
+function renderInsightsEval(report) {
+  const el = document.getElementById("petInsightsEval");
+  if (!el) return;
+  if (!report || typeof report !== "object") {
+    el.innerHTML = `<p class="pet-insights-empty">暂无评测结果。请先「抓取评测集」再「跑评测」。</p>`;
+    return;
+  }
+  if (report.ok === false || report.error) {
+    el.innerHTML = `<p class="pet-insights-empty">${_insightsEsc(report.error || "尚无评测集，请先抓取")}</p>`;
+    return;
+  }
+  const conf = report.confusion || {};
+  const details = Array.isArray(report.details) ? report.details : [];
+  const rows = details.slice(0, 8).map((d) => {
+    const name = d.company
+      ? `${d.title || d.id} · ${d.company}`
+      : (d.title || d.id);
+    return `
+    <tr>
+      <td title="${_insightsEsc(d.id || "")}">${_insightsEsc(name)}</td>
+      <td>${_insightsEsc(d.expected)} → ${_insightsEsc(d.predicted)}</td>
+      <td class="${d.ok ? "pet-insights-ok" : "pet-insights-bad"}">${d.ok ? "通过" : "不符"}</td>
+    </tr>`;
+  }).join("");
+  el.innerHTML = `
+    <div class="pet-insights-stats">
+      <div class="pet-insights-stat">
+        <span class="pet-insights-stat-label">准确率</span>
+        <span class="pet-insights-stat-value">${_insightsEsc(_insightsPct(report.accuracy))}</span>
+      </div>
+      <div class="pet-insights-stat">
+        <span class="pet-insights-stat-label">误杀率</span>
+        <span class="pet-insights-stat-value">${_insightsEsc(_insightsPct(report.false_reject_rate))}</span>
+      </div>
+      <div class="pet-insights-stat">
+        <span class="pet-insights-stat-label">误放行率</span>
+        <span class="pet-insights-stat-value">${_insightsEsc(_insightsPct(report.false_pass_rate))}</span>
+      </div>
+      <div class="pet-insights-stat">
+        <span class="pet-insights-stat-label">用例</span>
+        <span class="pet-insights-stat-value">${_insightsEsc(report.total ?? 0)}</span>
+      </div>
+    </div>
+    <p class="pet-insights-mono" style="margin-top:8px">
+      TP ${conf.tp ?? 0} · TN ${conf.tn ?? 0} · FP ${conf.fp ?? 0} · FN ${conf.fn ?? 0}
+    </p>
+    ${rows ? `<table class="pet-insights-table" style="margin-top:8px"><thead><tr><th>岗位</th><th>期望→预测</th><th>结果</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+  `;
+}
+
+function renderInsightsRagAblation(report) {
+  const el = document.getElementById("petInsightsRagAblationBody");
+  if (!el) return;
+  if (!report || typeof report !== "object") {
+    el.innerHTML = `<p class="pet-insights-empty">暂无对比结果。搜岗并完成分析后会自动更新（有/无 RAG 各记一次分）。</p>`;
+    return;
+  }
+  if (report.ok === false) {
+    el.innerHTML = `<p class="pet-insights-bad">${_insightsEsc(report.error || "RAG 对比失败")}</p>`;
+    return;
+  }
+  const cases = Array.isArray(report.cases) ? report.cases : [];
+  const life = report.lifetime || {};
+  const ragHits = life.rag_hit_jobs ?? report.rag_hit_jobs ?? 0;
+  const hitFlip = life.hit_and_flip ?? report.hit_and_flip ?? 0;
+  const compared = Array.isArray(life.seen_ids)
+    ? life.seen_ids.length
+    : (Array.isArray(report.seen_ids) ? report.seen_ids.length : cases.length);
+  const lifetimeFlipRate = compared > 0
+    ? (Number(life.decision_flips || 0) / compared)
+    : report.flip_rate;
+  const backfillDone = life.flip_backfill_done === true;
+  const backfillProcessed = life.flip_backfill_processed ?? compared;
+  const rows = cases.map((c) => {
+    let ragLabel = "未命中";
+    if (c.rag_hit) {
+      const n = c.rag_hit_count ?? "?";
+      const best = Number(c.best_score);
+      const sim = Number.isFinite(best) ? ` · 最高 ${(best * 100).toFixed(0)}%` : "";
+      const expanded = c.rag_expanded ? " · 已扩召回" : "";
+      ragLabel = `命中（参考 ${n} 条${sim}${expanded}）`;
+    }
+    return `
+    <tr>
+      <td>${_insightsEsc(c.title)}</td>
+      <td>${ragLabel}</td>
+      <td>${_insightsEsc(c.score_without_rag)} → ${_insightsEsc(c.score_with_rag)} (${c.score_delta >= 0 ? "+" : ""}${_insightsEsc(c.score_delta)})</td>
+      <td>${_insightsEsc(c.decision_without_rag)} → ${_insightsEsc(c.decision_with_rag)}</td>
+      <td class="${c.flipped ? "pet-insights-bad" : "pet-insights-ok"}">${c.flipped ? "翻转" : "不变"}</td>
+    </tr>
+  `;
+  }).join("");
+  const ts = report.ts ? new Date(Number(report.ts) * 1000).toLocaleString() : "";
+  const statusLine = backfillDone
+    ? `历史翻转已补算完毕 · 已对照 ${_insightsEsc(compared)} 条`
+    : `历史翻转补算中… 已对照 ${_insightsEsc(backfillProcessed)} / ${_insightsEsc(ragHits)} 命中岗`;
+  el.innerHTML = `
+    <div class="pet-insights-stats">
+      <div class="pet-insights-stat">
+        <span class="pet-insights-stat-label">RAG 命中岗</span>
+        <span class="pet-insights-stat-value">${_insightsEsc(ragHits)}</span>
+      </div>
+      <div class="pet-insights-stat">
+        <span class="pet-insights-stat-label">对照翻转率</span>
+        <span class="pet-insights-stat-value">${_insightsEsc(_insightsPct(lifetimeFlipRate))}</span>
+      </div>
+      <div class="pet-insights-stat">
+        <span class="pet-insights-stat-label">命中且翻转</span>
+        <span class="pet-insights-stat-value">${_insightsEsc(hitFlip)}<small style="font-size:0.65em;opacity:.75"> / ${_insightsEsc(compared)}</small></span>
+      </div>
+      <div class="pet-insights-stat">
+        <span class="pet-insights-stat-label">均分差</span>
+        <span class="pet-insights-stat-value">${_insightsEsc(report.avg_score_delta ?? 0)}</span>
+      </div>
+    </div>
+    <p class="pet-insights-mono" style="margin-top:8px">
+      通过线 ${_insightsEsc(report.pass_score ?? 60)} 分
+      ${ts ? ` · 更新 ${_insightsEsc(ts)}` : ""}
+      ${life.analyzed != null ? ` · 历史分析 ${_insightsEsc(life.analyzed)}` : ""}
+      · ${_insightsEsc(statusLine)}
+    </p>
+    ${rows ? `<table class="pet-insights-table" style="margin-top:8px"><thead><tr><th>岗位</th><th>RAG</th><th>分(无→有)</th><th>决策</th><th>结果</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+  `;
+}
+
+const PET_INSIGHTS_POLL_MS = 8000;
+let petInsightsPollTimer = null;
+let petInsightsRefreshInFlight = null;
+
+async function capturePetEvalToday({ limit = 20 } = {}) {
+  const statusEl = document.getElementById("petInsightsStatus");
+  const btn = document.getElementById("petInsightsCaptureEval");
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.textContent = "正在抓取评测集…";
+  try {
+    const pageJobs = petJobSidebar?.getJobs?.() || [];
+    const resp = await fetch("/api/boss/eval/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobs: pageJobs, limit }),
+    });
+    const data = await parsePetApiResponse(resp, "抓取评测集失败");
+    const n = data?.count ?? 0;
+    const fromPage = data?.from_page ?? pageJobs.length;
+    if (statusEl) {
+      statusEl.textContent = n
+        ? `已写入 eval_today.json · ${n} 条（页面 ${fromPage} · 不足由分析库补齐）· ${data.path || ""}`
+        : "未抓到岗位：请先搜岗产生通过/筛掉记录，或等侧边栏有岗位后再试";
+    }
+    setStatus(n ? `评测集已保存（${n} 条）` : "抓取评测集：暂无岗位");
+    return data;
+  } catch (e) {
+    console.error("[pet-eval-capture]", e);
+    if (statusEl) statusEl.textContent = e?.message || "抓取失败";
+    setStatus(e?.message || "抓取评测集失败");
+    throw e;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function refreshPetInsights({ runEval = false, quiet = false } = {}) {
+  if (petInsightsRefreshInFlight && !runEval) {
+    return petInsightsRefreshInFlight;
+  }
+  const statusEl = document.getElementById("petInsightsStatus");
+  const evalBtn = document.getElementById("petInsightsRunEval");
+  const evalCard = document.getElementById("petInsightsEvalCard");
+  if (runEval && evalBtn) evalBtn.disabled = true;
+  if (statusEl && (!quiet || runEval)) {
+    statusEl.textContent = runEval ? "正在跑评测…" : "加载洞察…";
+  }
+  const run = (async () => {
+    try {
+      let lastEval = null;
+      if (runEval) {
+        const evalResp = await fetch("/api/boss/eval", { method: "POST" });
+        const evalBody = await parsePetApiResponse(evalResp, "评测失败");
+        lastEval = evalBody;
+        renderInsightsEval(evalBody);
+        evalCard?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+      }
+      const resp = await fetch(
+        `/api/boss/insights?eval=${runEval ? "0" : "1"}&t=${Date.now()}`,
+        { cache: "no-store" },
+      );
+      const data = await parsePetApiResponse(resp, "无法加载工程洞察");
+      renderInsightsMetrics(data);
+      if (!runEval && data.eval) renderInsightsEval(data.eval);
+      renderInsightsRagAblation(data.rag_ablation);
+      if (statusEl) {
+      if (runEval && lastEval) {
+        if (lastEval.ok === false || lastEval.error) {
+          statusEl.textContent = lastEval.error || "尚无评测集，请先抓取";
+        } else {
+          statusEl.textContent = `评测完成（eval_today）· 准确率 ${_insightsPct(lastEval.accuracy)} · 用例 ${lastEval.total ?? 0}`;
+        }
+      } else {
+          const n = data?.metrics?.events_read ?? 0;
+          const flip = data?.rag_ablation?.flip_rate;
+          const flipTxt = flip != null ? ` · 决策翻转率 ${_insightsPct(flip)}` : "";
+          statusEl.textContent = `实时更新 · 观测事件 ${n} 条 · 向量 ${data.vector_backend || "sqlite"}${flipTxt}`;
+        }
+      }
+    } catch (e) {
+      console.error("[pet-insights]", e);
+      if (statusEl && (!quiet || runEval)) statusEl.textContent = e?.message || "加载失败";
+    } finally {
+      if (runEval && evalBtn) evalBtn.disabled = false;
+      if (!runEval && petInsightsRefreshInFlight === run) {
+        petInsightsRefreshInFlight = null;
+      }
+    }
+  })();
+  if (!runEval) petInsightsRefreshInFlight = run;
+  return run;
+}
+
+function stopPetInsightsPolling() {
+  if (petInsightsPollTimer != null) {
+    clearInterval(petInsightsPollTimer);
+    petInsightsPollTimer = null;
+  }
+}
+
+function startPetInsightsPolling() {
+  stopPetInsightsPolling();
+  petInsightsPollTimer = setInterval(() => {
+    if (document.hidden) return;
+    void refreshPetInsights({ quiet: true });
+  }, PET_INSIGHTS_POLL_MS);
+}
+
+function initPetInsightsPanel() {
+  const root = document.getElementById("petInsights");
+  if (!root) return;
+  const actions = root.querySelector(".pet-insights-actions");
+  if (actions && !actions.dataset.insightsBound) {
+    actions.dataset.insightsBound = "1";
+    actions.addEventListener("click", (ev) => {
+      const btn = ev.target?.closest?.("button");
+      if (!btn || btn.disabled) return;
+      if (btn.id === "petInsightsRunEval") {
+        void refreshPetInsights({ runEval: true });
+      } else if (btn.id === "petInsightsCaptureEval") {
+        void capturePetEvalToday({ limit: 20 });
+      }
+    });
+  }
+  if (!root.dataset.insightsVisibilityBound) {
+    root.dataset.insightsVisibilityBound = "1";
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) void refreshPetInsights({ quiet: true });
+    });
+  }
+  void refreshPetInsights();
+  startPetInsightsPolling();
 }
 
 async function initPetOffice() {
@@ -7930,7 +8309,6 @@ async function initPetOffice() {
   }
 
   buildLegend();
-  buildDebugPanel();
   initPetScoutControls();
   initScoutHistorySidebar();
   const monitorRoot = document.getElementById("petMonitorSidebar");
@@ -7969,6 +8347,7 @@ async function initPetOffice() {
 
   refreshPetHeaderScoutStats();
   refreshIdleAgentTasks();
+  initPetInsightsPanel();
 }
 
 initPetOffice();

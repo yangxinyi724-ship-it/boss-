@@ -531,6 +531,7 @@ def _run_dual_agent_pipeline_once(
 		channel=channel,
 		store=store,
 		ai_service=ai_service,
+		profile=profile,
 	)
 
 	search_stats = search_result.stats
@@ -1254,6 +1255,7 @@ def _process_scout_jobs(
 				channel=channel,
 				store=store,
 				ai_service=ai_service,
+				profile=profile,
 			)
 			stats["analysis"]["jobs_filtered"] += 1
 			yield {
@@ -1270,13 +1272,23 @@ def _process_scout_jobs(
 			[job_for_analysis], profile,
 			store=store, ai_service=ai_service, criteria=criteria,
 		)
-		persist_analysis_result(
+		_persist_count, ablation_report = persist_analysis_result(
 			cache, analysis_result,
 			criteria=criteria,
 			channel=channel,
 			store=store,
 			ai_service=ai_service,
+			profile=profile,
 		)
+		if ablation_report:
+			yield {
+				"type": "rag_ablation_updated",
+				"rag_ablation": ablation_report,
+				"message": (
+					f"RAG 对比已更新 · 翻转率 "
+					f"{round(100 * float(ablation_report.get('flip_rate') or 0), 1)}%"
+				),
+			}
 
 		if analysis_result.passed_jobs:
 			enriched = analysis_result.passed_jobs[0]

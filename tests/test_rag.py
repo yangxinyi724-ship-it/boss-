@@ -170,3 +170,36 @@ def test_retrieve_analysis_rag_result_returns_meta(profile_store, monkeypatch):
 	assert "meta" in bundle
 	assert bundle["meta"]["code"] in {"ok", "below_threshold"}
 	assert isinstance(bundle["meta"].get("vector_count"), int)
+
+
+def test_select_rag_hits_threshold_and_expand():
+	from pet_boss.rag.service import select_rag_hits
+
+	# 高相似：最多 top_k=5
+	scored = [(0.9 - i * 0.01, f"h{i}") for i in range(10)]
+	hits, info = select_rag_hits(scored, top_k=5, expand_k=8, min_score=0.35, low_sim_score=0.45)
+	assert len(hits) == 5
+	assert info["expanded"] is False
+	assert info["best_score"] == 0.9
+
+	# 勉强过线：扩到 8
+	scored_low = [(0.40 - i * 0.005, f"l{i}") for i in range(10)]
+	hits2, info2 = select_rag_hits(
+		scored_low, top_k=5, expand_k=8, min_score=0.35, low_sim_score=0.45,
+	)
+	assert len(hits2) == 8
+	assert info2["expanded"] is True
+	assert 0.35 <= info2["best_score"] < 0.45
+
+	# 低于阈值：全部丢弃
+	scored_bad = [(0.2, "a"), (0.1, "b")]
+	hits3, info3 = select_rag_hits(scored_bad, top_k=5, expand_k=8, min_score=0.35)
+	assert hits3 == []
+	assert info3["above_threshold"] == 0
+	assert info3["best_score"] == 0.2
+
+	# 过线不足 top_k：扩上限，但仍只返回实际过线条数
+	scored_few = [(0.6, "a"), (0.55, "b"), (0.2, "noise")]
+	hits4, info4 = select_rag_hits(scored_few, top_k=5, expand_k=8, min_score=0.35)
+	assert hits4 == ["a", "b"]
+	assert info4["expanded"] is True

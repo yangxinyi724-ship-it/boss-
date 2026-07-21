@@ -8,6 +8,7 @@ from typing import Any
 
 from pet_boss.ai.config import (
 	AIConfigStore,
+	rag_retrieve_params,
 	resolve_embedding_base_url,
 	resolve_embedding_model,
 	rag_enabled as config_rag_enabled,
@@ -23,7 +24,8 @@ from pet_boss.rag.documents import (
 	reject_learning_document_text,
 )
 from pet_boss.rag.embeddings import embed_texts
-from pet_boss.rag.vector_store import VectorStore, cosine_similarity
+from pet_boss.rag.backends import open_vector_store
+from pet_boss.rag.vector_store import cosine_similarity
 
 
 @dataclass(frozen=True)
@@ -35,8 +37,14 @@ class RagHit:
 	metadata: dict[str, Any]
 
 
-def _vector_store(store: ProfileStore) -> VectorStore:
-	return VectorStore(store._conn)
+def _vector_store(store: ProfileStore):
+	data_dir = Path(getattr(store, "_dir")).parent
+	config: dict[str, Any] = {}
+	try:
+		config = AIConfigStore(data_dir).load_config()
+	except Exception:
+		config = {}
+	return open_vector_store(profile_store=store, data_dir=data_dir, config=config)
 
 
 def _embed_one(ai_service: AIService, text: str) -> list[float]:
@@ -195,13 +203,35 @@ def backfill_analysis_records(
 	return indexed
 
 
+def _retrieve_params_for_store(
+	profile_store: ProfileStore | None,
+	*,
+	top_k: int | None = None,
+) -> dict[str, Any]:
+	config: dict[str, Any] = {}
+	if profile_store is not None:
+		try:
+			data_dir = Path(getattr(profile_store, "_dir")).parent
+			config = AIConfigStore(data_dir).load_config()
+		except Exception:
+			config = {}
+	params = rag_retrieve_params(config)
+	if top_k is not None:
+		tk = max(1, min(int(top_k), 20))
+		params["top_k"] = tk
+		params["expand_k"] = max(tk, int(params["expand_k"]))
+	return params
+
+
 def retrieve_similar(
 	profile_store: ProfileStore,
 	ai_service: AIService,
 	job: dict[str, Any],
 	*,
 	top_k: int = 5,
+	expand_k: int = 8,
 	min_score: float = 0.35,
+	low_sim_score: float = 0.45,
 	search_query: str = "",
 	search_city: str = "",
 	exclude_security_id: str = "",
@@ -212,7 +242,9 @@ def retrieve_similar(
 		ai_service,
 		job,
 		top_k=top_k,
+		expand_k=expand_k,
 		min_score=min_score,
+		low_sim_score=low_sim_score,
 		search_query=search_query,
 		search_city=search_city,
 		exclude_security_id=exclude_security_id,
@@ -221,13 +253,60 @@ def retrieve_similar(
 	return hits
 
 
+def select_rag_hits(
+	scored: list[tuple[float, Any]],
+	*,
+	top_k: int = 5,
+	expand_k: int = 8,
+	min_score: float = 0.35,
+	low_sim_score: float = 0.45,
+) -> tuple[list[Any], dict[str, Any]]:
+	"""按阈值筛选参考，并在低相似时扩到 expand_k。
+
+	- 低于 min_score 一律不用
+	- 默认最多 top_k 条
+	- 若最高分落在 [min_score, low_sim_score)（勉强过线），或过线条数不足 top_k，
+	  则在仍过阈值的前提下扩到 expand_k 条
+	"""
+	info = {
+		"min_score": min_score,
+		"low_sim_score": low_sim_score,
+		"top_k": top_k,
+		"expand_k": expand_k,
+		"expanded": False,
+		"best_score": None,
+		"above_threshold": 0,
+		"limit_used": top_k,
+	}
+	if not scored:
+		return [], info
+	ordered = sorted(scored, key=lambda x: x[0], reverse=True)
+	best = float(ordered[0][0])
+	info["best_score"] = round(best, 4)
+	above = [(s, h) for s, h in ordered if s >= min_score]
+	info["above_threshold"] = len(above)
+	if not above:
+		return [], info
+
+	marginal = min_score <= best < low_sim_score
+	short = len(above) < top_k
+	limit = expand_k if (marginal or short) else top_k
+	limit = max(top_k, min(int(limit), int(expand_k)))
+	info["expanded"] = limit > top_k
+	info["limit_used"] = limit
+	hits = [h for _, h in above[:limit]]
+	return hits, info
+
+
 def retrieve_similar_with_meta(
 	profile_store: ProfileStore,
 	ai_service: AIService,
 	job: dict[str, Any],
 	*,
 	top_k: int = 5,
+	expand_k: int = 8,
 	min_score: float = 0.35,
+	low_sim_score: float = 0.45,
 	search_query: str = "",
 	search_city: str = "",
 	exclude_security_id: str = "",
@@ -237,6 +316,10 @@ def retrieve_similar_with_meta(
 	meta: dict[str, Any] = {
 		"enabled": bool(ai_service.rag_enabled),
 		"min_score": min_score,
+		"low_sim_score": low_sim_score,
+		"top_k": top_k,
+		"expand_k": expand_k,
+		"expanded": False,
 		"vector_count": 0,
 		"hit_count": 0,
 		"best_score": None,
@@ -250,6 +333,7 @@ def retrieve_similar_with_meta(
 
 	vs = _vector_store(profile_store)
 	meta["vector_count"] = vs.count()
+	meta["backend"] = getattr(vs, "backend_name", "sqlite")
 	query_text = job_query_text(job, search_query=search_query, search_city=search_city)
 	try:
 		query_vec = _embed_one(ai_service, query_text)
@@ -262,16 +346,31 @@ def retrieve_similar_with_meta(
 		meta["message"] = "Embedding 返回空向量。"
 		return [], meta
 
-	docs = vs.list_documents(limit=3000)
-	if not docs:
+	if vs.count() <= 0:
 		meta["code"] = "empty_store"
 		meta["message"] = "向量库为空，尚无成功入库的历史分析/拒绝案例。"
 		return [], meta
 
+	candidate_k = max(expand_k * 4, top_k * 4, expand_k)
+	try:
+		pairs = vs.query_similar(
+			query_vec,
+			top_k=candidate_k,
+			min_score=0.0,
+			limit_scan=3000,
+		)
+	except Exception:
+		# 后端异常时回退全表余弦
+		docs = vs.list_documents(limit=3000)
+		pairs = []
+		for doc in docs:
+			if not doc.embedding:
+				continue
+			pairs.append((doc, cosine_similarity(query_vec, doc.embedding)))
+		pairs.sort(key=lambda x: x[1], reverse=True)
+
 	scored: list[tuple[float, RagHit]] = []
-	for doc in docs:
-		if not doc.embedding:
-			continue
+	for doc, score in pairs:
 		if (
 			exclude_security_id
 			and exclude_job_id
@@ -279,11 +378,10 @@ def retrieve_similar_with_meta(
 			and doc.metadata.get("job_id") == exclude_job_id
 		):
 			continue
-		score = cosine_similarity(query_vec, doc.embedding)
-		scored.append((score, RagHit(
+		scored.append((float(score), RagHit(
 			doc_key=doc.doc_key,
 			source_type=doc.source_type,
-			score=score,
+			score=float(score),
 			text=doc.text,
 			metadata=doc.metadata,
 		)))
@@ -292,13 +390,27 @@ def retrieve_similar_with_meta(
 		meta["message"] = "向量库无可用向量（记录可能尚未完成 Embedding）。"
 		return [], meta
 
-	scored.sort(key=lambda x: x[0], reverse=True)
-	meta["best_score"] = round(scored[0][0], 4)
-	hits = [h for s, h in scored if s >= min_score][:top_k]
+	hits, sel = select_rag_hits(
+		scored,
+		top_k=top_k,
+		expand_k=expand_k,
+		min_score=min_score,
+		low_sim_score=low_sim_score,
+	)
+	meta["best_score"] = sel.get("best_score")
+	meta["expanded"] = bool(sel.get("expanded"))
+	meta["above_threshold"] = int(sel.get("above_threshold") or 0)
+	meta["limit_used"] = int(sel.get("limit_used") or top_k)
 	meta["hit_count"] = len(hits)
 	if hits:
 		meta["code"] = "ok"
-		meta["message"] = ""
+		if meta["expanded"]:
+			meta["message"] = (
+				f"相似度为勉强过线或过线条数不足，已扩至最多 {meta['limit_used']} 条参考"
+				f"（阈值 {min_score:.0%}）。"
+			)
+		else:
+			meta["message"] = ""
 		return hits, meta
 
 	meta["code"] = "below_threshold"
@@ -447,6 +559,7 @@ def retrieve_analysis_rag_result(
 	top_k: int = 5,
 ) -> dict[str, Any]:
 	"""返回 references + meta（含准确未命中原因），供分析持久化与资料柜展示。"""
+	params = _retrieve_params_for_store(profile_store, top_k=top_k)
 	if profile_store is None or ai_service is None:
 		return {
 			"references": [],
@@ -455,7 +568,10 @@ def retrieve_analysis_rag_result(
 				"vector_count": 0,
 				"hit_count": 0,
 				"best_score": None,
-				"min_score": 0.35,
+				"min_score": params["min_score"],
+				"low_sim_score": params["low_sim_score"],
+				"top_k": params["top_k"],
+				"expand_k": params["expand_k"],
 				"code": "no_ai",
 				"message": "分析时未配置 AI 服务，无法做向量检索。",
 			},
@@ -468,7 +584,10 @@ def retrieve_analysis_rag_result(
 				"vector_count": 0,
 				"hit_count": 0,
 				"best_score": None,
-				"min_score": 0.35,
+				"min_score": params["min_score"],
+				"low_sim_score": params["low_sim_score"],
+				"top_k": params["top_k"],
+				"expand_k": params["expand_k"],
 				"code": "rag_disabled",
 				"message": "向量 RAG 未启用（当前对话平台无原生 Embedding，且未配置独立 Embedding 网关）。",
 			},
@@ -496,7 +615,10 @@ def retrieve_analysis_rag_result(
 			profile_store,
 			ai_service,
 			job,
-			top_k=top_k,
+			top_k=params["top_k"],
+			expand_k=params["expand_k"],
+			min_score=params["min_score"],
+			low_sim_score=params["low_sim_score"],
 			search_query=search_query,
 			search_city=search_city,
 			exclude_security_id=str(job.get("security_id") or ""),
@@ -510,7 +632,10 @@ def retrieve_analysis_rag_result(
 				"vector_count": _vector_store(profile_store).count(),
 				"hit_count": 0,
 				"best_score": None,
-				"min_score": 0.35,
+				"min_score": params["min_score"],
+				"low_sim_score": params["low_sim_score"],
+				"top_k": params["top_k"],
+				"expand_k": params["expand_k"],
 				"code": "retrieve_error",
 				"message": f"向量检索异常：{exc}",
 			},

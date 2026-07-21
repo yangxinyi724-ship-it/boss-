@@ -29,7 +29,6 @@ from pet_boss.secretary.six_dim_score import (
 	compile_passed_jobs_with_scores,
 	select_daily_picks,
 )
-from pet_boss.secretary.xhs_post import build_xhs_vlog_post, export_xhs_vlog_post
 
 
 def resolve_report_date(value: str | None = None) -> date:
@@ -51,8 +50,6 @@ class SecretaryDutyResult:
 	markdown: str = ""
 	jobs_json: list[dict[str, Any]] = field(default_factory=list)
 	email: dict[str, Any] = field(default_factory=dict)
-	xhs_post: dict[str, Any] = field(default_factory=dict)
-	xhs_export: dict[str, Any] = field(default_factory=dict)
 	errors: list[str] = field(default_factory=list)
 
 
@@ -212,36 +209,6 @@ class SecretaryAI:
 			data["json_export_path"] = str(json_path)
 		return {"data": data, "markdown": markdown}
 
-	def build_vlog_post(self, report_date: date) -> dict[str, Any]:
-		config = self._config_store.load()
-		data = self.load_day_data(report_date)
-		post = build_xhs_vlog_post(data, config=config)
-		if self._ai_service and data["summary"]["total"] > 0:
-			try:
-				post = self._enhance_vlog_with_ai(post, data)
-			except Exception:
-				pass
-		return {"data": data, "post": post}
-
-	def _enhance_vlog_with_ai(self, post: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
-		prompt = (
-			"你是办公室秘书 AI，请把以下求职筛选数据改写成一篇适合发小红书的短 vlog 文案，"
-			"语气轻松、有打工人共鸣，150字以内，保留关键数字，不要 markdown 表格：\n"
-			f"日期：{data.get('date')}\n"
-			f"概览：{data.get('summary')}\n"
-			f"精选岗前3：{[(r.get('title'), r.get('company')) for r in (data.get('compiled_passed') or [])[:3]]}"
-		)
-		reply = self._ai_service.chat([
-			{"role": "system", "content": "你是秘书 AI，擅长写小红书风格求职 vlog。"},
-			{"role": "user", "content": prompt},
-		], temperature=0.8, max_tokens=512, agent="MS")
-		if reply.strip():
-			tag_line = post.get("tag_line") or ""
-			post = dict(post)
-			post["body"] = reply.strip()
-			post["full_text"] = f"{post.get('title') or ''}\n\n{reply.strip()}\n\n{tag_line}".strip()
-		return post
-
 	def send_daily_email(
 		self,
 		report_date: date,
@@ -267,44 +234,11 @@ class SecretaryAI:
 		subject = f"{prefix} · {report_date.isoformat()}"
 		return send_markdown_email(config=config, subject=subject, markdown_body=markdown)
 
-	def publish_xhs_vlog(
-		self,
-		report_date: date,
-		*,
-		post: dict[str, Any] | None = None,
-		dry_run: bool = False,
-	) -> dict[str, Any]:
-		config = self._config_store.load()
-		xhs = config.get("xiaohongshu") or {}
-		if not xhs.get("enabled", True):
-			return {"published": False, "reason": "xiaohongshu.disabled"}
-
-		if post is None:
-			post = self.build_vlog_post(report_date)["post"]
-
-		mode = xhs.get("mode") or "file"
-		if dry_run:
-			return {"published": False, "dry_run": True, "mode": mode, "post": post}
-
-		if mode != "file":
-			return {
-				"published": False,
-				"mode": mode,
-				"reason": "当前仅支持 mode=file 导出文案，请手动发布到小红书",
-				"post": post,
-			}
-
-		base = self._data_dir or Path(".")
-		output_dir = base / "exports" / "xiaohongshu"
-		export_info = export_xhs_vlog_post(post, output_dir=output_dir)
-		return {"published": True, "mode": "file", **export_info, "post": post}
-
 	def run_daily_duties(
 		self,
 		report_date: date,
 		*,
 		send_email: bool = True,
-		publish_xhs: bool = True,
 		dry_run: bool = False,
 	) -> SecretaryDutyResult:
 		result = SecretaryDutyResult(report_date=report_date.isoformat())
@@ -313,9 +247,6 @@ class SecretaryAI:
 		result.markdown = report["markdown"]
 		result.jobs_json = report["data"].get("jobs_json") or []
 
-		vlog = self.build_vlog_post(report_date)
-		result.xhs_post = vlog["post"]
-
 		if send_email:
 			try:
 				result.email = self.send_daily_email(
@@ -323,13 +254,5 @@ class SecretaryAI:
 				)
 			except EmailSendError as exc:
 				result.errors.append(str(exc))
-
-		if publish_xhs:
-			try:
-				result.xhs_export = self.publish_xhs_vlog(
-					report_date, post=result.xhs_post, dry_run=dry_run,
-				)
-			except Exception as exc:
-				result.errors.append(f"小红书导出失败: {exc}")
 
 		return result

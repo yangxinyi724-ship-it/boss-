@@ -6,7 +6,34 @@
 
 ---
 
+# 2026-07-21
+
+## 工程洞察 / RAG 检索增强 / 评测抓取 / 文档同步
+- **类型**：功能 / 改动 / 文档
+- **新增**：
+  - 工程洞察：观测汇总、抓取/跑评测、RAG 有无对照（实时增量 + 历史翻转补算）
+  - `boss eval --capture` / `POST /api/boss/eval/capture` → `eval_today.json`
+  - RAG：`ai_rag_min_score` 阈值；默认 top 5，低相似或过线不足时扩到 8
+  - README 演示「工程洞察」截图位；`docs/architecture.md`
+- **改动**：去掉页内「最近决策」列表与秘书小红书/vlog；删除内置 sample 标注样例，评测默认今日集
+- **改动（文档）**：README 能力一览 / CLI / 上手步骤；架构说明与检索参数对齐现状
+
+## 工程五项：架构 / 可观测 / 可插拔向量库 / 决策日志 / 评测
+- **类型**：功能 / 文档
+- **新增**：
+  - `docs/architecture.md` 架构与数据流
+  - `observability/` 搜岗事件 JSONL + `boss metrics`
+  - `agents/decision_log.py` 策略/换词决策落盘
+  - RAG 后端抽象（默认 sqlite，可选 chroma，`pip install -e ".[rag]"`）
+  - `boss eval` + 宠物页工程洞察 + `/api/boss/insights` / `/api/boss/eval`
+  - RAG 消融对比：`POST /api/boss/rag-ablation`、`boss eval --rag-ablation`
+- **改动**：搜岗管道事件写入观测日志；配置项 `ai_rag_vector_backend`；分析打分支持 `enable_rag` 消融
+
 # 2026-07-20
+## 修复搜岗中 ZC 气泡长期停在「搜岗中」
+- **类型**：修复
+- **问题**：SSE 积压 catch-up / 丢弃高频事件时不更新头顶任务气泡，且 `refreshIdleAgentTasks` 反复打回「搜岗中」；侧栏「最新动作」有岗位、气泡却卡住
+- **处理**：节流刷新 ZC 气泡；live 快照同步页码；搜岗中不再无脑覆盖气泡
 
 ## Docker 一键部署（Web + Chromium）
 - **类型**：功能 / 文档

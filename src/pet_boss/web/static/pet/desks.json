@@ -16,10 +16,9 @@
       "resume_parse",
       "portrait_json",
       "daily_report_six_dim",
-    "daily_picks",
+      "daily_picks",
       "feedback_collect",
-      "email",
-      "xhs_vlog"
+      "email"
     ],
     "reportSchedule": { "hour": 8, "minute": 30 },
     "dailyPicks": { "defaultMax": 5 },

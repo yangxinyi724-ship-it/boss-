@@ -78,6 +78,7 @@ _SCOUT_SSE_FANOUT_TYPES = frozenset({
 	"page_hidden_continue",
 	"page_visible_resume",
 	"boss_browser_closed",
+	"rag_ablation_updated",
 	# 轮次休息心跳：可推，积压时可丢（否则 UI 无法维持休息态）
 	"scout_heartbeat",
 }) | _SCOUT_SSE_BROWSE_TYPES
@@ -91,6 +92,7 @@ _SCOUT_SSE_SOFT_TYPES = frozenset({
 	"monitor_ok",
 	"monitor_token",
 	"scout_heartbeat",
+	"rag_ablation_updated",
 }) | _SCOUT_SSE_BROWSE_TYPES
 # 兼容旧名
 _SCOUT_SSE_DROPPABLE_TYPES = _SCOUT_SSE_SOFT_TYPES
@@ -1596,6 +1598,106 @@ def create_app(data_dir: Path):
 			"usage": get_token_usage_summary(data_dir),
 		}))
 
+	def _build_insights_payload(*, include_eval: bool = True) -> dict[str, Any]:
+		from pet_boss.agents.decision_log import read_recent_decisions
+		from pet_boss.ai.config import AIConfigStore
+		from pet_boss.observability import summarize_observability
+		from pet_boss.rag.backends import resolve_vector_backend_name
+
+		summary = summarize_observability(data_dir, limit=3000)
+		decisions = read_recent_decisions(data_dir, limit=12)
+		config: dict[str, Any] = {}
+		try:
+			config = AIConfigStore(data_dir).load_config()
+		except Exception:
+			config = {}
+		payload: dict[str, Any] = {
+			"metrics": summary,
+			"decisions": decisions,
+			"vector_backend": resolve_vector_backend_name(config),
+			"rag_enabled": bool(config.get("ai_rag_enabled", True)),
+		}
+		from pet_boss.eval import load_latest_rag_ablation
+
+		latest_ablation = load_latest_rag_ablation(data_dir)
+		if latest_ablation:
+			payload["rag_ablation"] = latest_ablation
+		if include_eval:
+			from pet_boss.eval import eval_today_path, run_eval_report
+
+			today = eval_today_path(data_dir)
+			if today.exists():
+				try:
+					payload["eval"] = {
+						**run_eval_report(today),
+						"labels_source": "eval_today",
+					}
+				except Exception as exc:
+					payload["eval"] = {
+						"ok": False,
+						"error": str(exc),
+						"total": 0,
+						"labels_source": "eval_today",
+					}
+		return payload
+
+	async def api_boss_insights(request: Request):
+		include_eval = str(request.query_params.get("eval") or "1").strip() not in {
+			"0", "false", "no",
+		}
+		data = await _run_blocking(_build_insights_payload, include_eval=include_eval)
+		return _json_response(_ok(data))
+
+	async def api_boss_eval_run(_: Request):
+		from pet_boss.eval import eval_today_path, run_eval_report
+
+		today = eval_today_path(data_dir)
+		if not today.exists():
+			return _json_response(_ok({
+				"ok": False,
+				"error": "尚无评测集。请先点「抓取评测集」生成 eval_today.json。",
+				"total": 0,
+				"labels_source": None,
+			}))
+		report = await _run_blocking(run_eval_report, today)
+		report = {**report, "labels_source": "eval_today", "ok": True}
+		return _json_response(_ok(report))
+
+	async def api_boss_eval_capture(request: Request):
+		"""把页面岗位（可空）+ 分析库补齐，写成 data/eval/eval_today.json。"""
+		try:
+			body = await request.json()
+		except Exception:
+			body = {}
+		if not isinstance(body, dict):
+			body = {}
+		jobs = body.get("jobs") if isinstance(body.get("jobs"), list) else []
+		raw_limit = body.get("limit") or request.query_params.get("limit") or 20
+		try:
+			limit = int(raw_limit)
+		except (TypeError, ValueError):
+			limit = 20
+		from pet_boss.eval import capture_eval_today
+
+		report = await _run_blocking(
+			capture_eval_today,
+			data_dir,
+			client_jobs=jobs,
+			limit=limit,
+		)
+		return _json_response(_ok(report))
+
+	async def api_boss_rag_ablation(request: Request):
+		raw_limit = request.query_params.get("limit") or "5"
+		try:
+			limit = int(raw_limit)
+		except (TypeError, ValueError):
+			limit = 5
+		from pet_boss.eval import run_rag_ablation_report
+
+		report = await _run_blocking(run_rag_ablation_report, data_dir, limit=limit)
+		return _json_response(_ok(report))
+
 	async def on_exception(request: Request, exc: Exception):
 		if isinstance(exc, ProfileWebError):
 			return _json_response(_err(exc), status=exc.status)
@@ -1653,6 +1755,10 @@ def create_app(data_dir: Path):
 		Route("/api/monitor/token-usage", api_monitor_token_usage, methods=["GET"]),
 		Route("/api/monitor/token-pricing", api_monitor_token_pricing_get, methods=["GET"]),
 		Route("/api/monitor/token-pricing", api_monitor_token_pricing_save, methods=["POST"]),
+		Route("/api/boss/insights", api_boss_insights, methods=["GET"]),
+		Route("/api/boss/eval", api_boss_eval_run, methods=["POST"]),
+		Route("/api/boss/eval/capture", api_boss_eval_capture, methods=["POST"]),
+		Route("/api/boss/rag-ablation", api_boss_rag_ablation, methods=["POST"]),
 		Mount("/static", StaticFiles(directory=STATIC_DIR), name="static"),
 	]
 

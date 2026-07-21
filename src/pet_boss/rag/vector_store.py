@@ -129,6 +129,29 @@ class VectorStore:
 		self._conn.commit()
 		return cursor.rowcount
 
+	@property
+	def backend_name(self) -> str:
+		return "sqlite"
+
+	def query_similar(
+		self,
+		query_embedding: list[float],
+		*,
+		top_k: int = 5,
+		min_score: float = 0.0,
+		limit_scan: int = 3000,
+	) -> list[tuple[VectorDocument, float]]:
+		docs = self.list_documents(limit=limit_scan)
+		scored: list[tuple[VectorDocument, float]] = []
+		for doc in docs:
+			if not doc.embedding:
+				continue
+			score = cosine_similarity(query_embedding, doc.embedding)
+			if score >= min_score:
+				scored.append((doc, score))
+		scored.sort(key=lambda x: x[1], reverse=True)
+		return scored[:top_k]
+
 	@staticmethod
 	def _row_to_doc(row: tuple[Any, ...]) -> VectorDocument:
 		meta_raw = row[4]

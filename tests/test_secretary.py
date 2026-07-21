@@ -53,7 +53,7 @@ def test_persist_analysis_result_from_analysis_ai(tmp_path: Path):
 		passed_jobs=[_sample_job("A", 90)],
 		filtered_jobs=[_sample_job("B", 40, passed=False)],
 	)
-	count = persist_analysis_result(store, result, channel="scout:golang:")
+	count, _ablation = persist_analysis_result(store, result, channel="scout:golang:")
 	assert count == 2
 	all_rows = store.list_analysis_records(0, time.time() + 1)
 	assert len(all_rows) == 2

@@ -369,7 +369,10 @@ class BossWebService:
 							query_pass_depth_max=depth_max,
 							query_exhaust_cooldown_sec=cooldown_hours * 3600,
 						)
+						from pet_boss.observability import record_scout_event
+
 						for event in pipeline:
+							record_scout_event(self._data_dir, event)
 							for aux in monitor.drain_auxiliary_events():
 								yield aux
 							if event.get("type") == "job_passed" and event.get("job"):

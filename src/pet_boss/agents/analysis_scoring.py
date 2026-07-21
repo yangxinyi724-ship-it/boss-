@@ -375,6 +375,7 @@ def score_job_analysis_with_ai(
 	*,
 	store: ProfileStore | None = None,
 	target_city: str | None = None,
+	enable_rag: bool = True,
 ) -> AdaptiveScore:
 	learning_hints = feedback_summary_for_prompt(store) if store else ""
 	profile_payload = build_analysis_profile_payload(
@@ -386,12 +387,22 @@ def score_job_analysis_with_ai(
 	ai_mem = profile_payload.get("ai_learned_memory")
 	if ai_mem:
 		learning_hints = f"{learning_hints}\n\n{ai_mem}"
-	rag_bundle = retrieve_analysis_rag_result(store, svc, job, search_city=target_city or "")
-	rag_refs = rag_bundle.get("references") or []
-	rag_meta = rag_bundle.get("meta") or {}
-	rag_ctx = format_rag_context_from_references(rag_refs)
-	if rag_ctx:
-		learning_hints = f"{learning_hints}\n\n{rag_ctx}"
+	rag_refs: list[Any] = []
+	rag_meta: dict[str, Any] = {"enabled": False, "code": "rag_disabled_for_ablation"}
+	if enable_rag:
+		rag_bundle = retrieve_analysis_rag_result(store, svc, job, search_city=target_city or "")
+		rag_refs = rag_bundle.get("references") or []
+		rag_meta = rag_bundle.get("meta") or {}
+		rag_ctx = format_rag_context_from_references(rag_refs)
+		if rag_ctx:
+			learning_hints = f"{learning_hints}\n\n{rag_ctx}"
+	else:
+		rag_meta = {
+			"enabled": False,
+			"code": "ablation_no_rag",
+			"message": "消融对照：本次未注入向量 RAG 参考。",
+			"hit_count": 0,
+		}
 	prompt = ANALYSIS_SCORE_PROMPT.format(
 		profile_json=json.dumps(profile_payload, ensure_ascii=False),
 		learning_hints=learning_hints,
@@ -439,6 +450,8 @@ def score_job_analysis(
 	ai_service: AIService | None = None,
 	target_city: str | None = None,
 	pass_score: int = DEFAULT_PASS_SCORE,
+	enable_rag: bool = True,
+	borderline_review: bool = True,
 ) -> AdaptiveScore:
 	heuristic = score_job_analysis_heuristic(
 		job, profile, store=store, target_city=target_city,
@@ -446,7 +459,10 @@ def score_job_analysis(
 	if ai_service is not None:
 		try:
 			ai_result = score_job_analysis_with_ai(
-				ai_service, job, profile, store=store, target_city=target_city,
+				ai_service, job, profile,
+				store=store,
+				target_city=target_city,
+				enable_rag=enable_rag,
 			)
 			merged_risk = list(dict.fromkeys(ai_result.risk + heuristic.risk))
 			reason, merged_risk = sanitize_risk_lists(
@@ -458,14 +474,15 @@ def score_job_analysis(
 			ai_result.risk = merged_risk
 			if ai_result.score <= 0:
 				ai_result.score = heuristic.score
-			ai_result = maybe_review_borderline_score(
-				ai_service,
-				ai_result,
-				job,
-				profile,
-				store=store,
-				pass_score=pass_score,
-			)
+			if borderline_review and enable_rag:
+				ai_result = maybe_review_borderline_score(
+					ai_service,
+					ai_result,
+					job,
+					profile,
+					store=store,
+					pass_score=pass_score,
+				)
 			return ai_result
 		except Exception:
 			pass
