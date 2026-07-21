@@ -8,13 +8,17 @@
 
 # 2026-07-21
 
-## 工程洞察 / RAG 检索增强 / 评测抓取 / 文档同步
+## 工程洞察改名为决策监控
+- **类型**：改动
+- **改动**：宠物页页底区块标题与加载文案、README 演示区、架构/开发记录/规则、评测缺集提示，统一显示为「决策监控」（接口路径 `insights` 未改）
+
+## 决策监控 / RAG 检索增强 / 评测抓取 / 文档同步
 - **类型**：功能 / 改动 / 文档
 - **新增**：
-  - 工程洞察：观测汇总、抓取/跑评测、RAG 有无对照（实时增量 + 历史翻转补算）
+  - 决策监控：观测汇总、抓取/跑评测、RAG 有无对照（实时增量 + 历史翻转补算）
   - `boss eval --capture` / `POST /api/boss/eval/capture` → `eval_today.json`
   - RAG：`ai_rag_min_score` 阈值；默认 top 5，低相似或过线不足时扩到 8
-  - README 演示「工程洞察」截图位；`docs/architecture.md`
+  - README 演示「决策监控」截图位；`docs/architecture.md`
 - **改动**：去掉页内「最近决策」列表与秘书小红书/vlog；删除内置 sample 标注样例，评测默认今日集
 - **改动（文档）**：README 能力一览 / CLI / 上手步骤；架构说明与检索参数对齐现状
 
@@ -25,7 +29,7 @@
   - `observability/` 搜岗事件 JSONL + `boss metrics`
   - `agents/decision_log.py` 策略/换词决策落盘
   - RAG 后端抽象（默认 sqlite，可选 chroma，`pip install -e ".[rag]"`）
-  - `boss eval` + 宠物页工程洞察 + `/api/boss/insights` / `/api/boss/eval`
+  - `boss eval` + 宠物页决策监控 + `/api/boss/insights` / `/api/boss/eval`
   - RAG 消融对比：`POST /api/boss/rag-ablation`、`boss eval --rag-ablation`
 - **改动**：搜岗管道事件写入观测日志；配置项 `ai_rag_vector_backend`；分析打分支持 `enable_rag` 消融
 

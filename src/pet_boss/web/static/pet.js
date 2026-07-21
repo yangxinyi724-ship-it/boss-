@@ -8138,7 +8138,7 @@ async function refreshPetInsights({ runEval = false, quiet = false } = {}) {
   const evalCard = document.getElementById("petInsightsEvalCard");
   if (runEval && evalBtn) evalBtn.disabled = true;
   if (statusEl && (!quiet || runEval)) {
-    statusEl.textContent = runEval ? "正在跑评测…" : "加载洞察…";
+    statusEl.textContent = runEval ? "正在跑评测…" : "加载决策监控…";
   }
   const run = (async () => {
     try {
@@ -8154,7 +8154,7 @@ async function refreshPetInsights({ runEval = false, quiet = false } = {}) {
         `/api/boss/insights?eval=${runEval ? "0" : "1"}&t=${Date.now()}`,
         { cache: "no-store" },
       );
-      const data = await parsePetApiResponse(resp, "无法加载工程洞察");
+      const data = await parsePetApiResponse(resp, "无法加载决策监控");
       renderInsightsMetrics(data);
       if (!runEval && data.eval) renderInsightsEval(data.eval);
       renderInsightsRagAblation(data.rag_ablation);
